@@ -1,291 +1,70 @@
-#### 🔁 通信の仕組み（基本構造）  
-BLEは**「ペリフェラル（Peripheral）」と「セントラル（Central）」**という2つの役割で通信します。  
+GitHub と GitLab の比較（ユーザー数・Fortune 100 採用状況）
 
-用語	説明  
-Central	スマートフォンやPCなど「スキャンして接続する側」  
-Peripheral	心拍センサーなど「広告（アドバタイズ）して接続される側」
+## **GitHub**  
+・2023年1月：100M developers  
+引用文言："GitHub reached 100 million developers, two years ahead of our goal"  
+🔗 GitHub Blog  
+https://github.blog/news-insights/company-news/100-million-developers-and-counting/?utm_source=chatgpt.com
 
-#### 📚 GATTとATT  
-BLEではデータ構造として**GATT（Generic Attribute Profile）とATT（Attribute Protocol）**を使います。  
+・2024年：成長継続（数値明記なし）  
+引用文言："Developer growth continues at a rapid pace"  
+🔗 Octoverse 2024  
+https://github.blog/news-insights/octoverse/octoverse-2024/?utm_source=chatgpt.com  
 
-#### GATT構造：  
-BLEデバイスは「サービス（Service）」と「キャラクタリスティック（Characteristic）」という単位でデータをやり取りします。  
+・2025年5月：150M+ developers  
+引用文言："With 150 million developers, GitHub is the world’s largest development platform"  
+🔗 GitHub About  
+https://github.com/about?utm_source=chatgpt.com  
 
-Service：機能のまとまり（例：心拍数サービス）  
-Characteristic：1つのデータ項目（例：現在の心拍数）  
-Descriptor：Characteristicに関する追加情報（例：単位、説明）  
+#### ・Fortune 100 企業への採用率：90% に採用（GitHub Copilot）  
+AInvest, 2025年7月30日付  
+https://www.ainvest.com/news/github-copilot-hits-20-million-users-75-enterprise-growth-2507/?utm_source=chatgpt.com
 
+## **GitLab**
 
+・2021年10月：~30M registered users  
+引用文言："estimated 30 million registered users at the time of our IPO"  
+🔗 GitLab Blog  
+https://about.gitlab.com/blog/gitlab-inc-takes-the-devops-platform-public/?utm_source=chatgpt.com  
 
-#### 📡 アドバタイズ（Advertising）  
-BLEデバイスは、接続前にアドバタイズパケットをブロードキャストします。これには以下のような情報が含まれます：  
+・2023年：30M+ registered users  
+引用文言："More than 30 million registered users"  
+🔗 Press Release Apr 2023  
+https://about.gitlab.com/press/releases/2023-04-20-gitlab-seventh-devsecops-report-security-without-sacrifices/?utm_source=chatgpt.com  
 
-デバイス名  
-サービスUUID  
-メーカー情報
-16バイト程度の任意データ  
-ビーコン（例：iBeacon、Eddystone）もこの仕組みを利用しています。  
+・2024年6月（FY25 Q1）：30M registered users  
+引用文言："More than 30 million registered users"  
+🔗 Press Release Jun 2024  
+https://about.gitlab.com/press/releases/2024-06-03-gitlab-reports-first-quarter-fiscal-year-2025-financial-results/?utm_source=chatgpt.com  
 
+・2024年12月（FY25 Q3）：40M registered users  
+引用文言："More than 40 million registered users"  
+🔗 Press Release Dec 2024  
+https://about.gitlab.com/press/releases/2024-12-05-gitlab-reports-third-quarter-fiscal-year-2025-results/?utm_source=chatgpt.com  
 
-#### 🔧 BLEサービスとは？  
-サービスは、**キャラクタリスティック（Characteristic）**というデータ項目の「グループ」です。  
-例えば「心拍数サービス」には「現在の心拍数」や「測定のタイミング」などのデータが含まれます。  
-各サービスには**UUID（識別子）**が割り当てられており、標準化されたものと、カスタム（独自）サービスがあります。  
-
-#### 📚 サービスの種類  
-BLEサービスは大きく分けて以下の2種類です：  
-種類	内容  
-標準サービス（Standard Services）	Bluetooth SIG によって定義された共通のサービス。UUIDは16ビット（例：0x180D = 心拍数）  
-カスタムサービス（Custom Services）	開発者が独自に定義するサービス。UUIDは128ビット（例：12345678-1234-5678-1234-56789abcdef0）  
-
-| サービス名                         | UUID     | 説明                           |   
-| ----------------------------- | -------- | ---------------------------- |  
-| **Generic Access**            | `0x1800` | デバイス名や接続パラメータなど              |  
-| **Generic Attribute**         | `0x1801` | サービスの一覧情報（Service Changedなど） |  
-| **Device Information**        | `0x180A` | メーカー名、モデル番号など                |   
-| **Battery Service**           | `0x180F` | バッテリー残量の情報                   |  
-| **Heart Rate**                | `0x180D` | 心拍センサー用                      |  
-| **Health Thermometer**        | `0x1809` | 体温計用                         |  
-| **Blood Pressure**            | `0x1810` | 血圧計用                         |  
-| **Cycling Speed and Cadence** | `0x1816` | 自転車の速度・ケイデンス                 |  
-| **Current Time Service**      | `0x1805` | 現在時刻を取得・設定する                 |  
-| **Environmental Sensing**     | `0x181A` | 温度・湿度・気圧などの環境センサデータ          |  
-
-#### 🧪 カスタムサービスとは？  
-独自のアプリケーションやハードウェアのために定義するサービスです。  
-UUIDは128ビット（例：f000aa00-0451-4000-b000-000000000000）  
-複数のキャラクタリスティックを含むことができる  
-例：あなたの独自の温湿度センサーが、"MyEnvSensorService" としてサービスを持つ  
-
-#### 📄 キャラクタリスティックとの関係  
-サービスは複数のキャラクタリスティックを含みます：  
- 
-Service: Heart Rate (0x180D)      
-├── Characteristic: Heart Rate Measurement (0x2A37)  
-├── Characteristic: Body Sensor Location (0x2A38)  
-└── Characteristic: Heart Rate Control Point (0x2A39)  
+・2025年6月（FY26 Q1）：50M registered users  
+引用文言："More than 50 million registered users"  
+🔗 Press Release Jun 2025  
+https://about.gitlab.com/press/releases/2025-06-10-gitlab-reports-first-quarter-fiscal-year-2026-financial-results/?utm_source=chatgpt.com  
 
 
-#### ✅ あなたのコードを解剖  
-0000180D-0000-1000-8000-00805f9b34fb  
-0x180D → 心拍数サービス（Heart Rate Service）  
+#### ・Fortune 100 企業への採用率：50%以上に採用  
+Reuters, 2024年7月17日付  
+https://www.reuters.com/markets/deals/google-backed-software-developer-gitlab-explores-sale-sources-say-2024-07-17/?utm_source=chatgpt.com
 
-完全な128ビット形式に変換したもの  
+#### ※Fortune 100 とは  
+アメリカの経済誌『Fortune』が毎年発表する、売上高が上位100社にランクインした企業のリスト。
+このランキングは企業の規模や影響力を示す指標として広く認識されており、特に大規模な企業の導入状況を把握する際に有用。   
+https://fortune.com/ranking/fortune500/
 
-00002A37-0000-1000-8000-00805f9b34fb  
-0x2A37 → 心拍数測定キャラクタリスティック（Heart Rate Measurement Characteristic）  
+## 📈 成長比較（数字ベース）  
+### GitHub：2023年 100M → 2025年 150M+（2年で +50M）  
+#### Fortune 100 企業への採用率：90% に採用（GitHub Copilot）  
 
-#### 🔹 標準（16ビット/32ビット）UUIDを使う場合
-👉 0000xxxx-0000-1000-8000-00805f9b34fb の形式になります。
-この形式は、**Bluetooth SIGが定めた「ベースUUID」**と呼ばれる固定の雛形です。
-この形式の中で xxxx の部分に16ビットまたは32ビットの値を埋め込んで使います。
+### GitLab：2023年 30M+ → 2025年 50M（2年で +20M）  
+#### Fortune 100 企業への採用率：50%以上に採用  
 
-#### 📦 なぜ128ビットで指定するのか？  
-AndroidやBLEライブラリは内部的にすべてのUUIDを128ビット形式で扱うため、getService() や getCharacteristic() を使うときには128ビットのUUIDを明示的に指定する必要があります。  
+## 結論
 
-Heart Rate Service	0x180D	心拍数データ提供  
-Heart Rate Measurement	0x2A37	実際の心拍データ  
-Battery Service	0x180F	バッテリー情報  
-Battery Level	0x2A19	残量（%）  
- 
-#### 📌 ベースUUIDの詳細  
-標準のベースUUID（Bluetooth Base UUID）：  
-
-00000000-0000-1000-8000-00805F9B34FB  
-BLEの16ビットUUIDを128ビットに拡張するには、以下のように埋め込みます：  
-
-mathematica  
-0x180D → 0000180D-0000-1000-8000-00805F9B34FB  
-0x2A37 → 00002A37-0000-1000-8000-00805F9B34FB  
-
-
-#### 🔍 値の中身は基本的に byte配列（ByteArray, byte[]）  
-→ なので、アプリ側でデコードが必要です。  
-
-Alert Level	0x2A06	0x01（Mild）など	デバイスを振動・音で警告   
-LED Control（カスタム）	独自UUID	0x01 → 点灯、0x00 → 消灯	自作BLEライト制御  
-Sampling Rate（カスタム）	独自UUID	例：100（ms単位）	センサーデータの頻度設定  
-
-#### 🔎 BLEで扱いやすい代表的キャラクタリスティック例  
-1. バッテリーレベル（Battery Level）  
-UUID: 0x2A19  
-
-サイズ: 1バイト（0〜100の整数）   
-意味: デバイスのバッテリー残量をパーセンテージで表す  
-値の例: 0x64 → 100% 満充電  
-解析の簡単さ: ほぼそのまま数字として使える  
-用途: バッテリー残量表示やテストに最適  
-  
-2. デバイス名（Device Name）  
-UUID: 0x2A00  
-
-サイズ: 可変（テキスト）  
-意味: BLEデバイスの名前  
-値の例: "MyBLEDevice" などの文字列  
-解析の簡単さ: UTF-8の文字列としてそのまま扱える  
-
-===================
-
-📁 フォルダ構造の違い
-1. .framework の構造（単純）
-cpp
-コピーする
-編集する
-MyFramework.framework/
-├── MyFramework (バイナリ本体)
-├── Headers/
-│   └── MyFramework.h
-├── Modules/
-│   └── module.modulemap
-└── Info.plist
-この中に1つの Fat Binary を入れて、複数アーキを内包していた。
-
-iOS用・macOS用などは別々に作っていた。
-
-2. .xcframework の構造（複数アーキ/プラットフォーム対応）
-mathematica
-コピーする
-編集する
-MyFramework.xcframework/
-├── Info.plist
-├── ios-arm64/
-│   └── MyFramework.framework/
-│       ├── MyFramework
-│       ├── Headers/
-│       ├── Modules/
-│       └── Info.plist
-├── ios-arm64_x86_64-simulator/
-│   └── MyFramework.framework/
-│       ├── MyFramework
-│       ├── Headers/
-│       ├── Modules/
-│       └── Info.plist
-├── macos-arm64_x86_64/
-│   └── MyFramework.framework/
-│       ├── MyFramework
-│       ├── Headers/
-│       ├── Modules/
-│       └── Info.plist
-
-
-
-
-👨‍💻 SDK提供側のメリット・デメリット
-.framework	
-✅ メリット
-単純な構成
- 環境が一致すればビルドしやすい
-
-❌ デメリット
-Swiftのバージョン変化に弱い
-Fat Binaryはアーキ混在でビルドエラー
-
-.xcframework
-✅ メリット
-- Swiftのバージョン互換性が高い
-複数プラットフォームやSPM対応が可能
-
-❌ デメリット
-.frameworkと比較すると工程が多く
-
-🙋‍♀️ SDK利用側のメリット・デメリット
-.framework
-✅ メリット
-シンプルなインポート
-
-❌ デメリット	
-Swiftバージョン違うと即エラー
- シミュレータ実行時に詰まりがち
-
-.xcframework
-✅ メリット
- Swiftバージョンが違っても使いやすい
-
-❌ デメリット	
-構造が複雑で、最初は迷いやすい
-
-
-
-🧱 .framework 作成手順（Fat Binary対応）
-【Xcode GUIでの手順】
-ステップ	内容
-1	Xcodeで 実機向け（Generic iOS Device）Releaseビルド
-2	Xcodeで シミュレータ向け（Any iOS Simulator）Releaseビルド
-3	ビルド出力（2つの .framework）を Finder でコピー
-4	lipo で2つのバイナリを手動で結合（ターミナル）
-5	必要があれば .bundle を同梱してZIPで配布
-
-【CLI（Terminal）での手順】
-bash
-コピーする
-編集する
-# 実機向けビルド
-xcodebuild -scheme MyFramework \
-  -configuration Release \
-  -destination "generic/platform=iOS" \
-  -derivedDataPath build-device
-
-# シミュレータ向けビルド
-xcodebuild -scheme MyFramework \
-  -configuration Release \
-  -destination "generic/platform=iOS Simulator" \
-  -derivedDataPath build-sim
-
-# fat binary作成
-lipo -create \
-  build-device/Build/Products/Release-iphoneos/MyFramework.framework/MyFramework \
-  build-sim/Build/Products/Release-iphonesimulator/MyFramework.framework/MyFramework \
-  -output FatBinary/MyFramework
-
-# FatBinary/MyFramework を既存 .framework に上書きし、配布用にまとめる
-🧱 .xcframework 作成手順
-【Xcode GUIでの手順】
-ステップ	内容
-1	MyFramework の Build Settings で BUILD_LIBRARY_FOR_DISTRIBUTION = YES に設定
-2	Xcodeで「Archive」（実機向け）
-3	Xcodeで「Archive」（iOS Simulator向け）
-4	Organizer から各 .xcarchive をエクスポート
-5	ターミナルで xcodebuild -create-xcframework を実行して束ねる
-6	出力された .xcframework を確認・SPM連携用にGitなどで配布
-
-【CLI（Terminal）での手順】
-bash
-コピーする
-編集する
-# 実機向け Archive（arm64）
-xcodebuild archive \
-  -scheme MyFramework \
-  -destination "generic/platform=iOS" \
-  -archivePath build/MyFramework-iOS \
-  -configuration Release \
-  BUILD_LIBRARY_FOR_DISTRIBUTION=YES \
-  SKIP_INSTALL=NO \
-  BUILD_ACTIVE_ARCH=NO
-
-# シミュレータ向け Archive（x86_64 + arm64）
-xcodebuild archive \
-  -scheme MyFramework \
-  -destination "generic/platform=iOS Simulator" \
-  -archivePath build/MyFramework-Sim \
-  -configuration Release \
-  BUILD_LIBRARY_FOR_DISTRIBUTION=YES \
-  SKIP_INSTALL=NO \
-  BUILD_ACTIVE_ARCH=NO
-
-# xcframeworkにまとめる
-xcodebuild -create-xcframework \
-  -framework build/MyFramework-iOS.xcarchive/Products/Library/Frameworks/MyFramework.framework \
-  -framework build/MyFramework-Sim.xcarchive/Products/Library/Frameworks/MyFramework.framework \
-  -output build/MyFramework.xcframework
-✅ 比較まとめ（簡易表）
-項目	.framework（Fat Binary）	.xcframework
-必要なビルド回数	2回（実機 + シミュ）	2回（アーキ別 archive）
-バイナリ結合方法	lipo	-create-xcframework
-Swiftバージョン互換性	❌ なし（弱い）	✅ あり（interface使用時）
-複数プラットフォーム対応	❌ 困難	✅ 対応しやすい
-GUIだけで完結？	⚪︎ ほぼ可	❌ ターミナル必要
-SPM対応	❌ 不可	✅ 可（binaryTargetで配布）
-
-
-
-
+主流は GitHub：ユーザー数・Fortune 100 採用率ともに優位であり、標準的な選択肢として推奨されます。  
+GitLab：特定用途やDevSecOps統合に強みがありますが、導入規模・採用率では GitHub に劣ります。  
