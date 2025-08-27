@@ -1,70 +1,36 @@
-GitHub と GitLab の比較（ユーザー数・Fortune 100 採用状況）
+ios(swift)でのテスト実施方法とカバレッジ取得方法の検討
 
-## **GitHub**  
-・2023年1月：100M developers  
-引用文言："GitHub reached 100 million developers, two years ahead of our goal"  
-🔗 GitHub Blog  
-https://github.blog/news-insights/company-news/100-million-developers-and-counting/?utm_source=chatgpt.com
+xcode標準機能ではC0の網羅率までしか取得できないので
+ツールを使用したC1の取得する方法について調査した内容を整理。
 
-・2024年：成長継続（数値明記なし）  
-引用文言："Developer growth continues at a rapid pace"  
-🔗 Octoverse 2024  
-https://github.blog/news-insights/octoverse/octoverse-2024/?utm_source=chatgpt.com  
+#### 【SwiftにおけるC1（分岐網羅）カバレッジ自動測定に関する調査】
 
-・2025年5月：150M+ developers  
-引用文言："With 150 million developers, GitHub is the world’s largest development platform"  
-🔗 GitHub About  
-https://github.com/about?utm_source=chatgpt.com  
+**1. 結論**  
+・Swift現行のカバレッジ取得ツール（Xcode標準、Slather、xcov等）はC0のみ対応し、C1の自動測定・可視化は不可能。  
+・実務上は、C0カバレッジをベースにテストケース設計を行い、分岐ごとの網羅は手動でマッピングしてエビデンス化するのが現実的。  
+・推奨構成：  
+　テストフレームワーク: XCTest  
+　カバレッジ取得方法: Xcode標準＋Slather/xcovでC0を測定。※可視化用にxmlやhtmlへの変換ツールとしてSlather or xcovを検討。   
+　C1対応: 自動測定不可のため、テストケース設計で論理的に担保。  
+  
+**2. C1自動測定ができない理由**  
+**(1) LLVM(コンパイラ基盤)の仕組み上は対応しているが、Swiftでは未対応。**  
+LLVMの カバレッジツールであるllvm-cov は分岐カバレッジをサポートしているが、Swiftコンパイラが生成するカバレッジマッピングには分岐情報が含まれない。  
+また、C/C++向けにはLLVM IRに分岐カウンタが挿入されるが、Swiftは最適化や言語仕様の影響でInstrumentationが限定的であり  
+結果、C1情報が欠落し、自動測定不可。  
+→SwiftコンパイラでのInstrumentation不足  
+https://fortee.jp/iosdc-japan-2019/proposal/762f9e85-d71c-41e8-a891-d60d0129a355  
 
-#### ・Fortune 100 企業への採用率：90% に採用（GitHub Copilot）  
-AInvest, 2025年7月30日付  
-https://www.ainvest.com/news/github-copilot-hits-20-million-users-75-enterprise-growth-2507/?utm_source=chatgpt.com
+**(2) 実務報告でも確認されている**  
+Swift公式GitHubでも「Swiftはブランチカバレッジを生成しないため」と明言され  
+AppleのDeveloper Forumsでも「SwiftのUTカバレッジはブランチを含まない」との記載あり。  
+https://github.com/swiftlang/swift/issues/81730  
+https://developer.apple.com/forums/thread/785320  
 
-## **GitLab**
-
-・2021年10月：~30M registered users  
-引用文言："estimated 30 million registered users at the time of our IPO"  
-🔗 GitLab Blog  
-https://about.gitlab.com/blog/gitlab-inc-takes-the-devops-platform-public/?utm_source=chatgpt.com  
-
-・2023年：30M+ registered users  
-引用文言："More than 30 million registered users"  
-🔗 Press Release Apr 2023  
-https://about.gitlab.com/press/releases/2023-04-20-gitlab-seventh-devsecops-report-security-without-sacrifices/?utm_source=chatgpt.com  
-
-・2024年6月（FY25 Q1）：30M registered users  
-引用文言："More than 30 million registered users"  
-🔗 Press Release Jun 2024  
-https://about.gitlab.com/press/releases/2024-06-03-gitlab-reports-first-quarter-fiscal-year-2025-financial-results/?utm_source=chatgpt.com  
-
-・2024年12月（FY25 Q3）：40M registered users  
-引用文言："More than 40 million registered users"  
-🔗 Press Release Dec 2024  
-https://about.gitlab.com/press/releases/2024-12-05-gitlab-reports-third-quarter-fiscal-year-2025-results/?utm_source=chatgpt.com  
-
-・2025年6月（FY26 Q1）：50M registered users  
-引用文言："More than 50 million registered users"  
-🔗 Press Release Jun 2025  
-https://about.gitlab.com/press/releases/2025-06-10-gitlab-reports-first-quarter-fiscal-year-2026-financial-results/?utm_source=chatgpt.com  
-
-
-#### ・Fortune 100 企業への採用率：50%以上に採用  
-Reuters, 2024年7月17日付  
-https://www.reuters.com/markets/deals/google-backed-software-developer-gitlab-explores-sale-sources-say-2024-07-17/?utm_source=chatgpt.com
-
-#### ※Fortune 100 とは  
-アメリカの経済誌『Fortune』が毎年発表する、売上高が上位100社にランクインした企業のリスト。
-このランキングは企業の規模や影響力を示す指標として広く認識されており、特に大規模な企業の導入状況を把握する際に有用。   
-https://fortune.com/ranking/fortune500/
-
-## 📈 成長比較（数字ベース）  
-### GitHub：2023年 100M → 2025年 150M+（2年で +50M）  
-#### Fortune 100 企業への採用率：90% に採用（GitHub Copilot）  
-
-### GitLab：2023年 30M+ → 2025年 50M（2年で +20M）  
-#### Fortune 100 企業への採用率：50%以上に採用  
-
-## 結論
-
-主流は GitHub：ユーザー数・Fortune 100 採用率ともに優位であり、標準的な選択肢として推奨されます。  
-GitLab：特定用途やDevSecOps統合に強みがありますが、導入規模・採用率では GitHub に劣ります。  
+ **3. Swift標準および周辺ツールでのカバレッジ取得**  
+・Xcode標準機能: 行単位（C0）カバレッジを取得可能。ブランチ情報は含まれない。  
+   https://blogs.halodoc.io/ios-code-coverage/  
+・Slather / xcov: Xcodeのカバレッジデータを解析し、HTMLやCI用レポートを生成。  
+　ブランチカバレッジ（C1）は出力されず、行カバレッジのみ可視化。  
+   https://github.com/fastlane-community/xcov  
+   https://qiita.com/uhooi/items/e1e464777d2163286c59  
