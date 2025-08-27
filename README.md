@@ -15,9 +15,8 @@ xcode標準機能ではC0の網羅率までしか取得できないので
   
 **2. C1自動測定ができない理由**  
 **(1) LLVM(コンパイラ基盤)の仕組み上は対応しているが、Swiftでは未対応。**  
-LLVMの カバレッジツールであるllvm-cov は分岐カバレッジをサポートしているが、Swiftコンパイラが生成するカバレッジマッピングには分岐情報が含まれない。  
-また、C/C++向けにはLLVM IRに分岐カウンタが挿入されるが、Swiftは最適化や言語仕様の影響でInstrumentationが限定的であり  
-結果、C1情報が欠落し、自動測定不可。  
+LLVMの カバレッジツールであるllvm-cov は分岐カバレッジをサポートするが、Swiftは分岐情報を含むカバレッジマップを生成しない
+また、C/C++向けにはLLVM IRに分岐カウンタが挿入されるが、Swiftは言語仕様の影響でInstrumentationが限定的でC1情報が欠落する。
 →SwiftコンパイラでのInstrumentation不足  
 https://fortee.jp/iosdc-japan-2019/proposal/762f9e85-d71c-41e8-a891-d60d0129a355  
 
