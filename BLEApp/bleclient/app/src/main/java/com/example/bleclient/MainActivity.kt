@@ -40,7 +40,7 @@ class MainActivity : AppCompatActivity() {
             val device = result.device
             Log.d(TAG, "Discovered device: ${device.address} - ${device.name}")
             if (bluetoothGatt == null) {
-                // 停止して接続開始
+                // 停止して接続開1111始
                 bluetoothAdapter.bluetoothLeScanner.stopScan(this)
                 bluetoothGatt = device.connectGatt(this@MainActivity, false, gattCallback)
                 Log.d(TAG, "Connecting to device: ${device.address}")
