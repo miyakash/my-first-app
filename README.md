@@ -116,3 +116,32 @@ app/build/reports/jacoco/androidTest/report.xml
 UnitTestカバレッジは別タスクが必要（今回は不要）
 
 💡 これで AndroidTestの実行 → Jacocoレポート生成 が一連で完了する状態になります。
+
+
+＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝
+【修正したファイルをステージに挙げる方法】
+git add 修正したファイル名
+
+全部まとめてやるなら
+git add .
+
+【ステージに上げたやつを確認する方法】
+git status
+→赤字は未ステージ。緑はステージ済み。
+
+差分を見るなら
+git diff --cached
+
+【ステージをリセットする方法】
+git reset ファイル名
+
+全部まとめて
+git reset
+
+【ファイルの変更自体をリセットするには】
+git restore ファイル名
+
+【普段のフローでは】
+git add . → git commit -m "メッセージ" → git push で十分です
+
+＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝
