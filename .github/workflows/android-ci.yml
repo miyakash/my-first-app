@@ -1,4 +1,4 @@
-name: Android CI (macOS ARM)
+name: Android CI (macOS Intel)
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
 
 jobs:
   android-ci:
-    runs-on: macos-latest
+    runs-on: macos-12
 
     steps:
       # ① ソースコード取得
@@ -37,13 +37,13 @@ jobs:
           restore-keys: |
             gradle-${{ runner.os }}
 
-      # ⑤ ARM Emulator 起動 + AndroidTest + Jacoco
+      # ⑤ x86 Emulator 起動 + AndroidTest + Jacoco
       - name: Run Instrumented Tests & Jacoco
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 30
           target: google_apis
-          arch: arm64-v8a          # Apple Silicon対応
+          arch: x86_64          # Intel Mac 対応
           profile: pixel
           avd-name: test-avd
           force-avd-creation: true
