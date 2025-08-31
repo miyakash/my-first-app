@@ -8,7 +8,7 @@ on:
 
 jobs:
   android-ci:
-    runs-on: macos-latest
+    runs-on: macos-12   # ← Intel macOS を指定
 
     steps:
       # ① ソースコード取得
@@ -43,12 +43,11 @@ jobs:
         with:
           api-level: 30
           target: google_apis
-          arch: x86_64          # Intel Mac 対応
+          arch: x86_64             # Intel Mac ならこれでOK
           profile: pixel
           avd-name: test-avd
           force-avd-creation: true
           emulator-boot-timeout: 600
-          emulator-port: 5554
           emulator-options: -no-window
           disable-animations: true
           script: ./gradlew connectedDebugAndroidTest jacocoAndroidTestReport
@@ -58,4 +57,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: jacoco-report
-          path: DigitalKey/app/build/reports/jacoco/androidTest
+          path: DigitalKey/app/build/reports/jacoco/jacocoAndroidTestReport/html
