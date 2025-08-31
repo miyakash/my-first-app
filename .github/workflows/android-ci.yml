@@ -8,7 +8,7 @@ on:
 
 jobs:
   android-ci:
-    runs-on: macos-12
+    runs-on: macos-latest
 
     steps:
       # ① ソースコード取得
