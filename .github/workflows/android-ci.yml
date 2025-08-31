@@ -32,7 +32,7 @@ jobs:
           restore-keys: |
             gradle-${{ runner.os }}-
 
-            # 4. Install Android SDK packages explicitly
+      # 4. Install Android SDK packages explicitly
       - name: Install Android SDK packages
         run: |
           export ANDROID_SDK_ROOT=/opt/android-sdk
@@ -44,8 +44,11 @@ jobs:
           mv $ANDROID_SDK_ROOT/cmdline-tools/cmdline-tools $ANDROID_SDK_ROOT/cmdline-tools/latest
 
           yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --sdk_root=$ANDROID_SDK_ROOT --licenses
-          $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --sdk_root=$ANDROID_SDK_ROOT "platform-tools" "platforms;android-30" "system-images;android-30;google_apis;x86_64" "emulator"
-
+          $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --sdk_root=$ANDROID_SDK_ROOT \
+            "platform-tools" \
+            "platforms;android-30" \
+            "system-images;android-30;google_apis;x86_64" \
+            "emulator"
 
       # 5. Run Emulator and Connected Tests
       - name: Run Emulator and Connected Tests
@@ -54,11 +57,13 @@ jobs:
           api-level: 30
           arch: x86_64
           target: google_apis
-          profile: Pixel_4_API_30
+          avd-name: test
           force-avd-creation: true
           emulator-options: -no-window -no-accel -gpu swiftshader_indirect
           disable-linux-hw-accel: true
           emulator-boot-timeout: 600
+          cores: 2
+          disable-animations: true
           script: |
             echo "Waiting for emulator boot..."
             adb wait-for-device
