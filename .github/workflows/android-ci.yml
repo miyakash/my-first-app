@@ -7,7 +7,6 @@ on:
 
 jobs:
   build:
-    name: Build & Test
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -26,14 +25,13 @@ jobs:
         with:
           api-level: 30
           build-tools-version: 33.0.2
-          ndk-version: 25.2.9519653
 
       - name: Install Emulator & System Image
         run: |
           yes | sdkmanager --install "system-images;android-30;google_apis;x86_64"
           sdkmanager --update
 
-      - name: Start Emulator
+      - name: Run Emulator and Tests
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 30
@@ -41,11 +39,7 @@ jobs:
           target: google_apis
           profile: Pixel_4_API_30
           emulator-options: -no-window -no-accel
-          wait-for-boot: true
-          max-wait: 600
+          disable-linux-hw-accel: true
+          emulator-boot-timeout: 600
+          script: ./gradlew connectedAndroidTest
 
-      - name: Run Instrumented Tests
-        run: ./gradlew connectedAndroidTest
-
-      - name: Stop Emulator
-        run: adb -s emulator-5554 emu kill || true
