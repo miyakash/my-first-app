@@ -51,6 +51,8 @@ jobs:
             "emulator"
 
       # 5. Run Emulator and Connected Tests
+      # 省略：Checkout 〜 Emulator 起動までは同じ
+
       - name: Run Emulator and Connected Tests
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -69,4 +71,8 @@ jobs:
             adb wait-for-device
             adb shell 'while [[ $(getprop sys.boot_completed) != "1" ]]; do sleep 5; done;'
             echo "Emulator booted, running tests"
+            
+            # プロジェクトディレクトリに移動
+            cd DigitalKey
+            chmod +x ./gradlew
             ./gradlew connectedAndroidTest
