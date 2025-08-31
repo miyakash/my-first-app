@@ -8,6 +8,7 @@ on:
 jobs:
   android-emulator:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       # 1. Checkout
       - name: Checkout repository
@@ -31,13 +32,25 @@ jobs:
           restore-keys: |
             gradle-${{ runner.os }}-
 
-      # 4. Set up Android SDK
+      # 4. Set up Android SDK (no inputs)
       - name: Set up Android SDK
         uses: android-actions/setup-android@v2
+
+      # 5. Run Emulator and Connected Tests
+      - name: Run Emulator and Connected Tests
+        uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 30
-          target: google_apis
           arch: x86_64
-          force: true
-
-      # 5. Run Emul
+          target: google_apis
+          profile: Pixel_4_API_30
+          emulator-options: -no-window -no-accel
+          disable-linux-hw-accel: true
+          emulator-boot-timeout: 600
+          script: |
+            # Wait for device
+            adb wait-for-device
+            # Wait until boot completed
+            adb shell 'while [[ $(getprop sys.boot_completed) != "1" ]]; do sleep 5; done;'
+            # Run connected Android tests
+            ./gradlew connectedAndroidTest
