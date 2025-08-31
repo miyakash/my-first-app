@@ -1,4 +1,4 @@
-name: Android CI with Instrumented Tests & Jacoco
+name: Android CI (macOS Runner)
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
 
 jobs:
   android-ci:
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
 
     steps:
       # ① ソースコード取得
@@ -41,10 +41,16 @@ jobs:
       - name: Run Instrumented Tests & Jacoco
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 30              # エミュレータ Android バージョン
+          api-level: 30
           target: google_apis
           arch: x86_64
-          profile: Pixel_6
+          profile: pixel             # macOS runner での安定プロファイル
+          avd-name: test-avd         # シンプルなAVD名
+          force-avd-creation: true
+          emulator-boot-timeout: 600
+          emulator-port: 5554
+          emulator-options: -no-window
+          disable-animations: true
           script: ./gradlew connectedDebugAndroidTest jacocoAndroidTestReport
 
       # ⑥ Jacoco レポートをアーティファクトとして保存
