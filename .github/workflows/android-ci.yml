@@ -1,60 +1,9 @@
-name: Android CI (macOS Intel)
+name: Test macOS
 
-on:
-  push:
-    branches: ["main"]
-  pull_request:
-    branches: ["main"]
+on: [push]
 
 jobs:
-  android-ci:
-    runs-on: macos-12   # ← Intel macOS を指定
-
+  test:
+    runs-on: macos-12
     steps:
-      # ① ソースコード取得
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      # ② JDK17 セットアップ
-      - name: Setup JDK 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 17
-
-      # ③ Android SDK セットアップ
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      # ④ Gradle キャッシュ
-      - name: Cache Gradle
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
-          restore-keys: |
-            gradle-${{ runner.os }}
-
-      # ⑤ x86 Emulator 起動 + AndroidTest + Jacoco
-      - name: Run Instrumented Tests & Jacoco
-        uses: reactivecircus/android-emulator-runner@v2
-        with:
-          api-level: 30
-          target: google_apis
-          arch: x86_64             # Intel Mac ならこれでOK
-          profile: pixel
-          avd-name: test-avd
-          force-avd-creation: true
-          emulator-boot-timeout: 600
-          emulator-options: -no-window
-          disable-animations: true
-          script: ./gradlew connectedDebugAndroidTest jacocoAndroidTestReport
-
-      # ⑥ Jacoco レポートをアーティファクトとして保存
-      - name: Upload Jacoco Report
-        uses: actions/upload-artifact@v4
-        with:
-          name: jacoco-report
-          path: DigitalKey/app/build/reports/jacoco/jacocoAndroidTestReport/html
+      - run: echo "Hello macOS Runner!"
