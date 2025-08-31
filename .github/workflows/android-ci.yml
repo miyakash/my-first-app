@@ -1,4 +1,4 @@
-name: Android CI (macOS Intel)
+name: Android CI (Linux)
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
 
 jobs:
   android-ci:
-    runs-on: macos-13   # Intel Mac で安定する macOS runner
+    runs-on: ubuntu-latest
 
     steps:
       # ① ソースコード取得
@@ -43,12 +43,11 @@ jobs:
         with:
           api-level: 30
           target: google_apis
-          arch: x86_64           # Intel Mac 用
+          arch: x86_64
           profile: pixel
           avd-name: test-avd
           force-avd-creation: true
           emulator-boot-timeout: 600
-          emulator-port: 5554
           emulator-options: -no-window
           disable-animations: true
           script: ./gradlew connectedDebugAndroidTest jacocoAndroidTestReport
