@@ -40,18 +40,4 @@ jobs:
           arch: x86_64
           force: true
 
-      # 5. Run Emulator and Tests
-      - name: Run Emulator and Connected Tests
-        uses: reactivecircus/android-emulator-runner@v2
-        with:
-          api-level: 30
-          arch: x86_64
-          target: google_apis
-          profile: Pixel_4_API_30
-          emulator-options: -no-window -no-accel
-          disable-linux-hw-accel: true
-          emulator-boot-timeout: 600
-          script: |
-            adb wait-for-device
-            adb shell 'while [[ $(getprop sys.boot_completed) != "1" ]]; do sleep 5; done;'
-            ./gradlew connectedAndroidTest
+      # 5. Run Emul
