@@ -1,3 +1,4 @@
+# .github/workflows/android-tests.yml
 name: Android Instrumented Tests
 
 on:
@@ -29,13 +30,15 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-gradle-
 
-      - name: Run Instrumentation Tests
+      - name: Run Android Emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 30
           target: google_apis
-          arch: x86
+          arch: x86_64
           profile: pixel_4
-          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -accel off -delay-adb -no-metrics
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -accel off
           disable-animations: true
-          script: ./gradlew connectedCheck
+          script: ./gradlew connectedAndroidTest
+          # Bootに時間がかかるので余裕を持たせる
+          boot-timeout: 600
