@@ -35,7 +35,7 @@ jobs:
         with:
           api-level: 30
           target: google_apis
-          arch: x86
+          arch: x86_64
           profile: pixel_4
-          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -accel off -delay-adb
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -accel off -delay-adb -no-metrics
           script: ./gradlew connectedAndroidTest
