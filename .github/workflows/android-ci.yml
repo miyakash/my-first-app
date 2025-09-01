@@ -1,44 +1,77 @@
-# .github/workflows/android-tests.yml
 name: Android Instrumented Tests
 
 on:
   push:
-    branches: [ main ]
+    branches:
+      - main
   pull_request:
 
 jobs:
-  androidTest:
+  android-test:
     runs-on: ubuntu-latest
+    env:
+      JAVA_HOME: /usr/lib/jvm/java-11-openjdk-amd64
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v3
 
-      - name: Setup JDK 17
-        uses: actions/setup-java@v4
+      - name: Set up JDK
+        uses: actions/setup-java@v3
         with:
           distribution: temurin
-          java-version: 17
+          java-version: 11
 
-      - name: Cache Gradle
-        uses: actions/cache@v4
+      - name: Download Android SDK
+        uses: android-actions/setup-android@v2
         with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
-          restore-keys: |
-            ${{ runner.os }}-gradle-
+          api-level: 33
+          build-tools: 33.0.2
+          ndk: 25.2.9519653
+          cmake: 3.22.1
 
-      - name: Run Android Emulator
-        uses: reactivecircus/android-emulator-runner@v2
-        with:
-          api-level: 30
-          target: google_apis
-          arch: x86_64
-          profile: pixel_4
-          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -accel off
-          disable-animations: true
-          script: ./gradlew connectedAndroidTest
-          # Bootに時間がかかるので余裕を持たせる
-          boot-timeout: 600
+      - name: Accept Android Licenses
+        run: yes | sdkmanager --licenses
+
+      - name: Create AVD
+        run: |
+          echo "no" | avdmanager create avd \
+            --name test-emulator-${{ github.run_id }} \
+            --package "system-images;android-33;google_apis;x86_64" \
+            --device "pixel" \
+            --force
+
+      - name: Start Emulator
+        run: |
+          emulator -avd test-emulator-${{ github.run_id }} \
+            -no-window \
+            -gpu swiftshader_indirect \
+            -no-snapshot \
+            -noaudio \
+            -no-boot-anim \
+            -accel off \
+            -wipe-data &
+          EMULATOR_PID=$!
+
+          # Wait for emulator to be visible to adb
+          for i in {1..30}; do
+            adb devices | grep emulator | grep "device" && break
+            echo "Waiting for emulator to be online..."
+            sleep 10
+          done
+
+          # Wait until boot completes
+          adb -s emulator-5554 wait-for-device
+          adb -s emulator-5554 shell 'while [[ $(getprop sys.boot_completed) != 1 ]]; do sleep 5; done;'
+          adb -s emulator-5554 shell input keyevent 82 # unlock screen
+
+          echo $EMULATOR_PID > emulator.pid
+
+      - name: Run Instrumented Tests
+        run: |
+          ./gradlew connectedAndroidTest --max-workers=1
+
+      - name: Stop Emulator
+        run: |
+          EMULATOR_PID=$(cat emulator.pid)
+          kill -9 $EMULATOR_PID || true
