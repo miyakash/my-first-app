@@ -14,17 +14,11 @@ jobs:
       PATH: $HOME/Android/platform-tools:$HOME/Android/cmdline-tools/latest/cmdline-tools/bin:$PATH
 
     steps:
-      # 1. 必要パッケージのインストール
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y tar unzip wget git
-
-      # 2. リポジトリをチェックアウト
+      # 1. リポジトリをチェックアウト
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 3. Android SDK コマンドラインツールのセットアップ
+      # 2. Android SDK コマンドラインツールのセットアップ
       - name: Setup Android SDK
         run: |
           mkdir -p $ANDROID_HOME/cmdline-tools
@@ -35,7 +29,7 @@ jobs:
           yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses
           $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platform-tools" "platforms;android-33"
 
-      # 4. Gradle キャッシュのセットアップ（ビルド高速化）
+      # 3. Gradle キャッシュ
       - name: Cache Gradle
         uses: actions/cache@v3
         with:
@@ -46,6 +40,6 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-gradle-
 
-      # 5. UnitTest の実行
+      # 4. UnitTest 実行
       - name: Run Unit Tests
         run: ./gradlew testDebugUnitTest --stacktrace
