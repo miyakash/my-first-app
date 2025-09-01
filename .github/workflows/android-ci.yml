@@ -1,4 +1,3 @@
-# .github/workflows/android-tests.yml
 name: Android Instrumented Tests
 
 on:
@@ -30,12 +29,13 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-gradle-
 
-      - name: Run Android Emulator
+      - name: Run Instrumentation Tests
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 30
           target: google_apis
-          arch: x86_64
+          arch: x86
           profile: pixel_4
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -accel off -delay-adb -no-metrics
-          script: ./gradlew connectedAndroidTest
+          disable-animations: true
+          script: ./gradlew connectedCheck
