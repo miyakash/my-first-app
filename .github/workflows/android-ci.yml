@@ -2,15 +2,16 @@ name: Android Instrumented Tests
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
   pull_request:
+    branches: [main]
 
 jobs:
   android-test:
     runs-on: ubuntu-latest
     env:
-      ANDROID_HOME: ${{ runner.temp }}/Android
+      ANDROID_HOME: $HOME/Android
+      PATH: $HOME/Android/platform-tools:$HOME/Android/cmdline-tools/latest/cmdline-tools/bin:$PATH
 
     steps:
       - name: Checkout repository
@@ -22,48 +23,41 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - name: Install Android SDK command line tools
+      - name: Install Android SDK
         run: |
           sudo apt-get update
           sudo apt-get install -y unzip wget
           mkdir -p $ANDROID_HOME/cmdline-tools/latest
           wget https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip -O cmdline-tools.zip
           unzip cmdline-tools.zip -d $ANDROID_HOME/cmdline-tools/latest
-          export PATH=$ANDROID_HOME/cmdline-tools/latest/cmdline-tools/bin:$ANDROID_HOME/platform-tools:$PATH
           yes | sdkmanager --licenses
           sdkmanager "platform-tools" "platforms;android-33" "system-images;android-33;google_apis;x86_64"
 
       - name: Create AVD
         run: |
-          export PATH=$ANDROID_HOME/cmdline-tools/latest/cmdline-tools/bin:$ANDROID_HOME/platform-tools:$PATH
           echo "no" | avdmanager create avd \
-            --name test-emulator-${{ github.run_id }} \
+            --name test-emulator \
             --package "system-images;android-33;google_apis;x86_64" \
             --device "pixel" \
             --force
 
       - name: Start Emulator
         run: |
-          export PATH=$ANDROID_HOME/cmdline-tools/latest/cmdline-tools/bin:$ANDROID_HOME/platform-tools:$PATH
-          $ANDROID_HOME/emulator/emulator -avd test-emulator-${{ github.run_id }} \
-            -no-window -no-audio -no-snapshot \
-            -gpu swiftshader_indirect -memory 2048 -no-boot-anim &
-          EMULATOR_PID=$!
-          echo "Waiting for emulator to boot..."
-          adb wait-for-device
-          boot_completed=""
-          while [ "$boot_completed" != "1" ]; do
-            sleep 5
+          nohup $ANDROID_HOME/emulator/emulator -avd test-emulator \
+            -no-snapshot -no-boot-anim -no-window -gpu swiftshader_indirect \
+            -memory 2048 -cores 2 > emulator.log 2>&1 &
+          
+          # ADB online チェックで待機
+          for i in {1..60}; do
+            adb wait-for-device
             boot_completed=$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')
-            echo "Boot completed: $boot_completed"
+            if [ "$boot_completed" = "1" ]; then
+              echo "Emulator booted"
+              break
+            fi
+            echo "Waiting for emulator... ($i/60)"
+            sleep 5
           done
-          echo "Emulator is ready!"
 
       - name: Run Android Instrumented Tests
-        run: |
-          ./gradlew connectedAndroidTest --stacktrace
-
-      - name: Stop Emulator
-        if: always()
-        run: |
-          adb -s emulator-5554 emu kill || true
+        run: ./gradlew connectedAndroidTest --stacktrace
