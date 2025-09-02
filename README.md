@@ -1,3 +1,7 @@
+
+https://chatgpt.com/c/68b6f629-d8fc-8329-aeaa-994d465e4210
+
+
 slatherを導入したい。手順を教えて。
 ChatGPT:
 
