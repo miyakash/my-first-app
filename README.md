@@ -1,411 +1,591 @@
-AndroidTest + Jacoco レポート取得手順（まとめ）
-1. 前提
+package com.example.bleapp
 
-Windows PC
+import android.annotation.SuppressLint
+import android.bluetooth.*
+import android.bluetooth.le.*
+import android.content.Context
+import android.os.Handler
+import android.os.Looper
+import android.util.Log
+import java.util.*
 
-Android Studio プロジェクト（Kotlin + Compose）
+/**
+ * BLEModule
+ *
+ * - BluetoothGatt 等の OS リソースは内部で管理（UI に渡さない）
+ * - Service / Characteristic UUID は外部で管理（UI/VM/Config 側で保持）
+ * - スキャン / 接続 / サービス探索 / 書き込み / 通知 を提供
+ * - 異常時は必ず listener に通知し、UI がハングしないようにする
+ */
+class BLEModule(private val context: Context) {
 
-エミュレータ or 実機が利用可能
+    private val TAG = "BLEModule"
+    private val mainHandler = Handler(Looper.getMainLooper())
 
-Gradle Kotlin DSL (build.gradle.kts) + Version Catalog (libs.〇〇) 使用
+    private val bluetoothManager =
+        context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
+    private val bluetoothAdapter: BluetoothAdapter? = bluetoothManager.adapter
+    private val scanner: BluetoothLeScanner? = bluetoothAdapter?.bluetoothLeScanner
 
-2. GradleにJacocoを追加
-plugins {
-    alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
-    alias(libs.plugins.kotlin.compose)
-    jacoco
+    private var bluetoothGatt: BluetoothGatt? = null
+
+    private var isScanning = false
+    private var isConnecting = false
+
+    // 書き込みタイムアウト管理用マップ
+    private val WRITE_TIMEOUT_MS = 5000L
+    private val writeTimeoutMap = mutableMapOf<UUID, Runnable>()
+
+    // --------------------------------------------------
+    // Listener: UI / ViewModel に通知するイベント（OSオブジェクトは渡さない）
+    // --------------------------------------------------
+    interface Listener {
+        fun onScanResult(deviceName: String?, deviceAddress: String)
+        fun onScanFailed(errorCode: Int)
+        fun onScanTimeout()
+
+        fun onConnecting(deviceAddress: String)
+        fun onConnected(deviceAddress: String)
+        fun onDisconnected(deviceAddress: String)
+        fun onConnectionFailed(deviceAddress: String?, reason: String)
+
+        fun onServicesDiscovered(deviceAddress: String, services: List<UUID>)
+
+        fun onCharacteristicChanged(characteristicUuid: UUID, value: ByteArray)
+        fun onWriteSuccess(characteristicUuid: UUID)
+        fun onWriteFailed(characteristicUuid: UUID?, reason: String)
+    }
+
+    var listener: Listener? = null
+
+    // ==============================================================
+    // Scan
+    // ==============================================================
+    private val scanCallback = object : ScanCallback() {
+        override fun onScanResult(callbackType: Int, result: ScanResult) {
+            listener?.onScanResult(result.device.name, result.device.address)
+        }
+
+        override fun onBatchScanResults(results: MutableList<ScanResult>) {
+            results.forEach { listener?.onScanResult(it.device.name, it.device.address) }
+        }
+
+        override fun onScanFailed(errorCode: Int) {
+            isScanning = false
+            Log.e(TAG, "scan failed: $errorCode")
+            listener?.onScanFailed(errorCode)
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    fun startScan(timeoutMs: Long = 10_000L) {
+        if (isScanning) return
+
+        val adapter = bluetoothAdapter
+        if (adapter == null || !adapter.isEnabled) {
+            listener?.onScanFailed(-1)
+            return
+        }
+
+        isScanning = true
+        scanner?.startScan(scanCallback)
+        Log.d(TAG, "scan start")
+
+        // タイマーでスキャンタイムアウトを管理
+        mainHandler.postDelayed({
+            if (isScanning) {
+                stopScan()
+                listener?.onScanTimeout()
+            }
+        }, timeoutMs)
+    }
+
+    @SuppressLint("MissingPermission")
+    fun stopScan() {
+        if (!isScanning) return
+        scanner?.stopScan(scanCallback)
+        isScanning = false
+        Log.d(TAG, "scan stop")
+    }
+
+    // ==============================================================
+    // Connect / Disconnect / Close
+    // ==============================================================
+    @SuppressLint("MissingPermission")
+    fun connect(deviceAddress: String) {
+        if (isConnecting) return
+
+        val adapter = bluetoothAdapter
+        if (adapter == null || !adapter.isEnabled) {
+            listener?.onConnectionFailed(deviceAddress, "Bluetooth adapter disabled")
+            return
+        }
+
+        val device = try {
+            adapter.getRemoteDevice(deviceAddress)
+        } catch (e: IllegalArgumentException) {
+            listener?.onConnectionFailed(null, "Invalid device address")
+            return
+        }
+
+        isConnecting = true
+        listener?.onConnecting(device.address)
+
+        try {
+            bluetoothGatt = device.connectGatt(context, false, gattCallback)
+        } catch (e: Exception) {
+            isConnecting = false
+            Log.e(TAG, "connectGatt exception: ${e.message}")
+            listener?.onConnectionFailed(device.address, "connectGatt exception: ${e.message}")
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    fun disconnect() {
+        bluetoothGatt?.disconnect()
+        // 書き込みタイマーも解除
+        writeTimeoutMap.values.forEach { mainHandler.removeCallbacks(it) }
+        writeTimeoutMap.clear()
+    }
+
+    @SuppressLint("MissingPermission")
+    fun close() {
+        stopScan()
+        bluetoothGatt?.close()
+        bluetoothGatt = null
+        isConnecting = false
+        writeTimeoutMap.values.forEach { mainHandler.removeCallbacks(it) }
+        writeTimeoutMap.clear()
+    }
+
+    // ==============================================================
+    // discoverServices（UI側が明示的に呼ぶ）
+    // ==============================================================
+    @SuppressLint("MissingPermission")
+    fun discoverServices() {
+        val g = bluetoothGatt
+        if (g == null) {
+            listener?.onConnectionFailed(null, "GATT not connected")
+            return
+        }
+        val started = g.discoverServices()
+        if (!started) {
+            listener?.onConnectionFailed(g.device.address, "discoverServices returned false")
+        } else {
+            Log.d(TAG, "discoverServices started")
+        }
+    }
+
+    // ==============================================================
+    // GATT Callback（内部で OS資源 を扱う）
+    // ==============================================================
+    private val gattCallback = object : BluetoothGattCallback() {
+
+        @SuppressLint("MissingPermission")
+        override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
+            isConnecting = false
+
+            if (status != BluetoothGatt.GATT_SUCCESS) {
+                val reason = "GATT error status=$status"
+                Log.e(TAG, "connection error: $reason")
+                listener?.onConnectionFailed(gatt.device.address, reason)
+                close()
+                return
+            }
+
+            when (newState) {
+                BluetoothProfile.STATE_CONNECTED -> {
+                    Log.d(TAG, "connected: ${gatt.device.address}")
+                    listener?.onConnected(gatt.device.address)
+                    // discoverServices は UI 側で呼ぶ
+                }
+                BluetoothProfile.STATE_DISCONNECTED -> {
+                    Log.d(TAG, "disconnected: ${gatt.device.address}")
+                    listener?.onDisconnected(gatt.device.address)
+                    close()
+                }
+            }
+        }
+
+        override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+                val uuids = gatt.services.map { it.uuid }
+                listener?.onServicesDiscovered(gatt.device.address, uuids)
+            } else {
+                val reason = "Service discovery failed: status=$status"
+                Log.e(TAG, reason)
+                listener?.onConnectionFailed(gatt.device.address, reason)
+                close()
+            }
+        }
+
+        override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
+            listener?.onCharacteristicChanged(characteristic.uuid, characteristic.value ?: ByteArray(0))
+        }
+
+        override fun onCharacteristicWrite(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
+            // 書き込みタイマー解除
+            writeTimeoutMap[characteristic.uuid]?.let {
+                mainHandler.removeCallbacks(it)
+                writeTimeoutMap.remove(characteristic.uuid)
+            }
+
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+                listener?.onWriteSuccess(characteristic.uuid)
+            } else {
+                listener?.onWriteFailed(characteristic.uuid, "Write failed status=$status")
+            }
+        }
+    }
+
+    // ==============================================================
+    // Public API: write / enableNotification
+    // - UUIDは呼び出し元で保持し、引数として渡す（UI側でUUIDを扱ってOK）
+    // - BluetoothGatt / Descriptor 等の OS オブジェクトは内部で扱う
+    // - 書き込みタイムアウトを追加
+    // ==============================================================
+    @SuppressLint("MissingPermission")
+    fun writeCharacteristic(serviceUuid: UUID, charUuid: UUID, data: ByteArray): Boolean {
+        val g = bluetoothGatt ?: run {
+            listener?.onWriteFailed(null, "GATT not connected")
+            return false
+        }
+
+        val service = g.getService(serviceUuid)
+        if (service == null) {
+            listener?.onWriteFailed(null, "Service not found: $serviceUuid")
+            return false
+        }
+
+        val characteristic = service.getCharacteristic(charUuid)
+        if (characteristic == null) {
+            listener?.onWriteFailed(null, "Characteristic not found: $charUuid")
+            return false
+        }
+
+        characteristic.value = data
+        val started = g.writeCharacteristic(characteristic)
+
+        if (!started) {
+            listener?.onWriteFailed(charUuid, "writeCharacteristic returned false")
+            return false
+        }
+
+        // 書き込みタイマーセット
+        val writeRunnable = Runnable {
+            listener?.onWriteFailed(charUuid, "Write timeout after $WRITE_TIMEOUT_MS ms")
+            writeTimeoutMap.remove(charUuid)
+        }
+        writeTimeoutMap[charUuid] = writeRunnable
+        mainHandler.postDelayed(writeRunnable, WRITE_TIMEOUT_MS)
+
+        return true
+    }
+
+    @SuppressLint("MissingPermission")
+    fun enableNotification(serviceUuid: UUID, charUuid: UUID): Boolean {
+        val g = bluetoothGatt ?: run {
+            listener?.onConnectionFailed(null, "GATT not connected")
+            return false
+        }
+
+        val service = g.getService(serviceUuid) ?: run {
+            listener?.onConnectionFailed(null, "Service not found: $serviceUuid")
+            return false
+        }
+
+        val characteristic = service.getCharacteristic(charUuid) ?: run {
+            listener?.onConnectionFailed(null, "Characteristic not found: $charUuid")
+            return false
+        }
+
+        val ok = g.setCharacteristicNotification(characteristic, true)
+        val descriptor = characteristic.getDescriptor(UUID.fromString("00002902-0000-1000-8000-00805f9b34fb"))
+        if (descriptor != null) {
+            descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+            val writeStarted = g.writeDescriptor(descriptor)
+            if (!writeStarted) {
+                listener?.onConnectionFailed(g.device.address, "writeDescriptor returned false")
+            }
+        } else {
+            Log.w(TAG, "Client Characteristic Configuration Descriptor not found for $charUuid")
+        }
+        return ok
+    }
 }
 
-android {
-    buildTypes {
-        debug {
-            isTestCoverageEnabled = true // AndroidTestカバレッジ有効化
+
+====================================================================================================================
+
+import CoreBluetooth
+import Foundation
+
+/// BLEModule
+///
+/// - CBCentralManager / CBPeripheral 等の OS リソースは内部で管理
+/// - Service / Characteristic UUID は外部で管理（UI/VM側で保持）
+/// - スキャン / 接続 / サービス探索 / 書き込み / 通知 を提供
+/// - 異常時は必ず listener に通知し、UI がハングしないようにする
+final class BLEModule: NSObject {
+
+    // MARK: - Listener: UI / ViewModel に通知するイベント
+    protocol Listener: AnyObject {
+        /// デバイスが見つかった
+        func onScanResult(name: String?, address: UUID)
+        /// スキャンに失敗した
+        func onScanFailed(error: Error)
+        /// スキャンがタイムアウトした
+        func onScanTimeout()
+        
+        /// 接続開始した
+        func onConnecting(address: UUID)
+        /// 接続成功
+        func onConnected(address: UUID)
+        /// 切断された
+        func onDisconnected(address: UUID)
+        /// 接続に失敗した
+        func onConnectionFailed(address: UUID?, reason: String)
+        
+        /// サービス探索成功
+        func onServicesDiscovered(address: UUID, services: [CBUUID])
+        /// キャラクタリスティック通知を受信
+        func onCharacteristicChanged(uuid: CBUUID, value: Data)
+        /// 書き込み成功
+        func onWriteSuccess(uuid: CBUUID)
+        /// 書き込み失敗
+        func onWriteFailed(uuid: CBUUID?, reason: String)
+    }
+    
+    weak var listener: Listener?
+
+    // MARK: - Internal state
+    private var central: CBCentralManager!
+    private var targetPeripheral: CBPeripheral?
+
+    private var isScanning = false
+    private var isConnecting = false
+
+    // タイマーによるスキャン・書き込みタイムアウト管理
+    private var scanTimeoutTimer: Timer?
+    private var writeTimeoutTimers: [CBUUID: Timer] = [:]
+    private let WRITE_TIMEOUT: TimeInterval = 5.0
+
+    // MARK: - Init
+    override init() {
+        super.init()
+        // メインスレッドで BLE イベントを受け取る
+        central = CBCentralManager(delegate: self, queue: .main)
+    }
+
+    // MARK: - Scan
+    /// BLE デバイスをスキャン開始
+    /// - timeout: タイムアウト（秒）
+    func startScan(timeout: TimeInterval = 10.0) {
+        guard central.state == .poweredOn else {
+            listener?.onScanFailed(error: NSError(domain: "BLE", code: -1, userInfo: [NSLocalizedDescriptionKey: "Bluetooth is off"]))
+            return
+        }
+
+        guard !isScanning else { return }
+
+        isScanning = true
+        central.scanForPeripherals(withServices: nil, options: [CBCentralManagerScanOptionAllowDuplicatesKey: false])
+
+        // タイマーでスキャンタイムアウトを管理
+        scanTimeoutTimer?.invalidate()
+        scanTimeoutTimer = Timer.scheduledTimer(withTimeInterval: timeout, repeats: false) { [weak self] _ in
+            guard let self else { return }
+            if self.isScanning {
+                self.stopScan()
+                self.listener?.onScanTimeout()
+            }
+        }
+
+        print("[BLE] scan started")
+    }
+
+    /// スキャン停止
+    func stopScan() {
+        guard isScanning else { return }
+        central.stopScan()
+        isScanning = false
+        print("[BLE] scan stopped")
+    }
+
+    // MARK: - Connect / Disconnect
+    /// デバイスに接続
+    func connect(to peripheralId: UUID) {
+        guard central.state == .poweredOn else {
+            listener?.onConnectionFailed(address: peripheralId, reason: "Bluetooth powered off")
+            return
+        }
+
+        // キャッシュから取得
+        if let knownPeripheral = central.retrievePeripherals(withIdentifiers: [peripheralId]).first {
+            isConnecting = true
+            listener?.onConnecting(address: knownPeripheral.identifier)
+            targetPeripheral = knownPeripheral
+            targetPeripheral?.delegate = self
+            central.connect(knownPeripheral, options: nil)
+        } else {
+            listener?.onConnectionFailed(address: nil, reason: "Peripheral not found in cache")
+        }
+    }
+
+    /// 接続解除
+    func disconnect() {
+        guard let p = targetPeripheral else { return }
+        central.cancelPeripheralConnection(p)
+        invalidateAllWriteTimeouts() // 書き込みタイマーも解除
+    }
+
+    /// BLE モジュールを完全クローズ
+    func close() {
+        stopScan()
+        invalidateAllWriteTimeouts()
+        targetPeripheral = nil
+        isConnecting = false
+    }
+
+    // MARK: - Discover Services
+    /// サービス探索（UI側が明示的に呼ぶ）
+    func discoverServices(_ serviceUUIDs: [CBUUID]? = nil) {
+        guard let p = targetPeripheral else {
+            listener?.onConnectionFailed(address: nil, reason: "Peripheral not connected")
+            return
+        }
+        p.discoverServices(serviceUUIDs)
+    }
+
+    // MARK: - Write Characteristic
+    /// キャラクタリスティックに書き込み（タイムアウト付き）
+    func writeCharacteristic(serviceUuid: CBUUID, charUuid: CBUUID, data: Data) {
+        guard let p = targetPeripheral else {
+            listener?.onWriteFailed(uuid: nil, reason: "Peripheral not connected")
+            return
+        }
+
+        guard let service = p.services?.first(where: { $0.uuid == serviceUuid }),
+              let characteristic = service.characteristics?.first(where: { $0.uuid == charUuid }) else {
+            listener?.onWriteFailed(uuid: nil, reason: "Characteristic not found")
+            return
+        }
+
+        // 書き込み実行
+        p.writeValue(data, for: characteristic, type: .withResponse)
+
+        // タイムアウト設定
+        writeTimeoutTimers[charUuid]?.invalidate()
+        writeTimeoutTimers[charUuid] = Timer.scheduledTimer(withTimeInterval: WRITE_TIMEOUT, repeats: false) { [weak self] _ in
+            self?.listener?.onWriteFailed(uuid: charUuid, reason: "Write timeout (\(self?.WRITE_TIMEOUT ?? 0)s)")
+            self?.writeTimeoutTimers.removeValue(forKey: charUuid)
+        }
+    }
+
+    private func invalidateWriteTimeout(for uuid: CBUUID) {
+        writeTimeoutTimers[uuid]?.invalidate()
+        writeTimeoutTimers.removeValue(forKey: uuid)
+    }
+
+    private func invalidateAllWriteTimeouts() {
+        writeTimeoutTimers.values.forEach { $0.invalidate() }
+        writeTimeoutTimers.removeAll()
+    }
+
+    // MARK: - Enable Notification
+    /// キャラクタリスティック通知開始
+    func enableNotification(serviceUuid: CBUUID, charUuid: CBUUID) {
+        guard let p = targetPeripheral else {
+            listener?.onConnectionFailed(address: nil, reason: "Peripheral not connected")
+            return
+        }
+
+        guard let service = p.services?.first(where: { $0.uuid == serviceUuid }),
+              let characteristic = service.characteristics?.first(where: { $0.uuid == charUuid }) else {
+            listener?.onConnectionFailed(address: nil, reason: "Characteristic not found")
+            return
+        }
+
+        // 通知を有効化
+        p.setNotifyValue(true, for: characteristic)
+    }
+}
+
+// =====================================================
+// MARK: - CBCentralManagerDelegate
+// =====================================================
+
+extension BLEModule: CBCentralManagerDelegate {
+    func centralManagerDidUpdateState(_ central: CBCentralManager) {
+        switch central.state {
+        case .poweredOn:
+            print("[BLE] powered on")
+        case .unauthorized, .unsupported, .poweredOff:
+            print("[BLE] unavailable: \(central.state.rawValue)")
+        default: break
+        }
+    }
+
+    func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral,
+                        advertisementData: [String: Any], rssi RSSI: NSNumber) {
+        listener?.onScanResult(name: peripheral.name, address: peripheral.identifier)
+    }
+
+    func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
+        isConnecting = false
+        targetPeripheral = peripheral
+        targetPeripheral?.delegate = self
+        listener?.onConnected(address: peripheral.identifier)
+        print("[BLE] connected \(peripheral.identifier)")
+    }
+
+    func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
+        isConnecting = false
+        listener?.onConnectionFailed(address: peripheral.identifier, reason: error?.localizedDescription ?? "failed to connect")
+    }
+
+    func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
+        invalidateAllWriteTimeouts()
+        if let error = error {
+            listener?.onConnectionFailed(address: peripheral.identifier, reason: "Disconnected with error: \(error.localizedDescription)")
+        } else {
+            listener?.onDisconnected(address: peripheral.identifier)
         }
     }
 }
 
+// =====================================================
+// MARK: - CBPeripheralDelegate
+// =====================================================
 
-debug ビルドで必ず isTestCoverageEnabled = true を設定
+extension BLEModule: CBPeripheralDelegate {
 
-3. Jacocoレポートタスクの設定
-
-build.gradle.kts の最後に追加：
-
-tasks.register<JacocoReport>("jacocoAndroidTestReport") {
-    group = "Reporting"
-    description = "Generate Jacoco coverage report for AndroidTest"
-
-    dependsOn("connectedDebugAndroidTest") // AndroidTest実行後にレポート生成
-
-    reports {
-        xml.required.set(true)
-        html.required.set(true)
-        csv.required.set(false)
-        html.outputLocation.set(file("${buildDir}/reports/jacoco/androidTest"))
-    }
-
-    val javaClasses = fileTree("${buildDir}/intermediates/javac/debug/classes") {
-        exclude(
-            "**/R.class",
-            "**/R\$*.class",
-            "**/BuildConfig.*",
-            "**/Manifest*.*",
-            "**/*Test*.*"
-        )
-    }
-
-    val kotlinClasses = fileTree("${buildDir}/tmp/kotlin-classes/debug") {
-        exclude("**/*Test*.*")
-    }
-
-    classDirectories.setFrom(files(javaClasses, kotlinClasses))
-    sourceDirectories.setFrom(files("src/main/java", "src/main/kotlin"))
-
-    executionData.setFrom(
-        fileTree("${buildDir}/outputs/code_coverage/debugAndroidTest/connected") {
-            include("**/*.ec")
+    func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
+        if let error = error {
+            listener?.onConnectionFailed(address: peripheral.identifier, reason: "Service discovery failed: \(error.localizedDescription)")
+            return
         }
-    )
-}
 
-
-ポイント：executionData を fileTree で指定すると、AVD名にスペースや括弧があっても正しく読み込まれる
-
-classDirectories に Java + Kotlin クラスを両方含める
-
-4. エミュレータ確認
-1) AVDの場所確認
-C:\Users\<ユーザー名>\.android\avd\
-
-2) エミュリスト確認
-cd %ANDROID_SDK_ROOT%\emulator
-emulator -list-avds
-
-3) エミュ起動
-emulator -avd Pixel_6
-
-
-PATH に SDK の emulator と platform-tools を追加しておくと便利
-
-5. コマンドでテスト → レポート生成
-cd C:\Users\81808\AndroidStudioProjects\DigitalKey
-
-# AndroidTest実行（カバレッジ生成）
-.\gradlew connectedDebugAndroidTest
-
-# Jacocoレポート生成
-.\gradlew jacocoAndroidTestReport
-
-
-HTMLレポート：
-
-app/build/reports/jacoco/androidTest/index.html
-
-
-XMLレポート（CI/CD用）：
-
-app/build/reports/jacoco/androidTest/report.xml
-
-6. 注意点
-
-エミュレータ/実機が起動していないと connectedDebugAndroidTest は失敗
-
-.ec ファイルが生成されていれば、レポートは自動生成される
-
-UnitTestカバレッジは別タスクが必要（今回は不要）
-
-💡 これで AndroidTestの実行 → Jacocoレポート生成 が一連で完了する状態になります。
-
-
-＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝
-【修正したファイルをステージに挙げる方法】
-git add 修正したファイル名
-
-全部まとめてやるなら
-git add .
-
-【ステージに上げたやつを確認する方法】
-git status
-→赤字は未ステージ。緑はステージ済み。
-
-差分を見るなら
-git diff --cached
-
-【ステージをリセットする方法】
-git reset ファイル名
-
-全部まとめて
-git reset
-
-【ファイルの変更自体をリセットするには】
-git restore ファイル名
-
-【普段のフローでは】
-git add . → git commit -m "メッセージ" → git push で十分です
-
-＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝
-
-ざっくり流れ（初心者向け）
-
-Android（Ubuntu runner）
-
-Android SDK をセットアップ（android-actions/setup-android）。
-
-AVD（エミュレータ）を作成・起動（ReactiveCircus/android-emulator-runner を利用）。
-
-connectedDebugAndroidTest を実行して UI テストを走らせる。
-
-Jacoco 用の gradle タスクで coverage ファイル（.exec / .ec）を集めて HTML/XML レポートを生成する。
-（testCoverageEnabled true などの設定が必要）｡ 
-GitHub
-+1
-
-iOS（macOS runner）
-
-macOS ランナーで xcodebuild test を -enableCodeCoverage YES で実行してカバレッジデータを生成。
-
-slather を使って HTML / Cobertura などのレポートに変換して保存。スキーム側で「Gather coverage data」を有効にする必要あり。 
-GitHub
-+1
-
-事前準備チェックリスト（必ず確認）
-
-Android
-
-app/build.gradle に testCoverageEnabled（または対応する新しい設定） を入れておく。※ AGP バージョンで設定名が変わる場合あり（トラブル時は AGP ドキュメント参照）。 
-Google Issue Tracker
-
-UI テスト（Espresso 等）がローカルで通っていること（CI での再現性のため）。
-
-エミュレータは x86_64 + google_apis が CI では安定しやすい。
-
-iOS
-
-GitHub の macOS ランナーを使用（runs-on: macos-latest）。
-
-テスト実行するスキームで「Gather coverage data（コードカバレッジ取得）」が ON になっていること。 
-GitHub
-
-CocoaPods を使っているなら pod install を workflow に入れる。
-
-app/build.gradle に入れる（例）
-
-これは Groovy DSL の例。app モジュールに置いてください。プロジェクトによってパスやクラスディレクトリが変わるので必要に応じ調整を。
-
-plugins {
-    id 'com.android.application'
-    id 'kotlin-android'
-    id 'jacoco'
-}
-
-android {
-    compileSdkVersion 33
-
-    defaultConfig {
-        applicationId "com.example.app"
-        minSdkVersion 21
-        targetSdkVersion 33
-        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        guard let services = peripheral.services else { return }
+        listener?.onServicesDiscovered(address: peripheral.identifier, services: services.map { $0.uuid })
     }
 
-    buildTypes {
-        debug {
-            // UI (connectedAndroidTest) 用に coverage データを出す設定
-            testCoverageEnabled true
+    func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
+        invalidateWriteTimeout(for: characteristic.uuid)
+        if let error = error {
+            listener?.onWriteFailed(uuid: characteristic.uuid, reason: error.localizedDescription)
+        } else {
+            listener?.onWriteSuccess(uuid: characteristic.uuid)
+        }
+    }
+
+    func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
+        if let error = error {
+            print("[BLE] notification error: \(error.localizedDescription)")
+            return
+        }
+        if let value = characteristic.value {
+            listener?.onCharacteristicChanged(uuid: characteristic.uuid, value: value)
         }
     }
 }
-
-// Jacoco レポートを connectedAndroidTest の実行後にまとめるタスクの例
-// (AGP/Gradle のバージョンによりパスが変わるのでエラー時はパスを調整)
-tasks.register("jacocoAndroidTestReport", JacocoReport) {
-    dependsOn "connectedDebugAndroidTest"
-
-    reports {
-        xml.required = true
-        html.required = true
-    }
-
-    def fileFilter = [
-        '**/R.class', '**/R$*.class', '**/BuildConfig.*', '**/Manifest*.*',
-        '**/*Test*.*', 'android/**/*.*'
-    ]
-
-    def debugTree = fileTree(dir: "$buildDir/intermediates/javac/debug", excludes: fileFilter)
-    def kotlinDebugTree = fileTree(dir: "$buildDir/tmp/kotlin-classes/debug", excludes: fileFilter)
-
-    sourceDirectories.setFrom(files(["src/main/java", "src/main/kotlin"]))
-    classDirectories.setFrom(files([debugTree, kotlinDebugTree]))
-    executionData.setFrom(fileTree(dir: buildDir, includes: [
-        "outputs/code_coverage/debugAndroidTest/connected/*coverage.ec",
-        "outputs/unit_test_code_coverage/debugUnitTest/testDebugUnitTest.exec"
-    ]))
-}
-
-
-補足：AGP のバージョンで testCoverageEnabled の扱いや Jacoco の設定方法が変わることがあります（うまく出力されない場合は AGP のリリースノートや Issue を確認してください）。 
-Google Issue Tracker
-
-コメント入り：GitHub Actions（.github/workflows/ci.yml）サンプル
-
-以下は Android と iOS を同じワークフロー内に並列ジョブで実行するサンプルです。ワークフロー内にたっぷりコメントを入れてあるので、初心者の方でも読みやすいはずです。
-
-name: CI - Android (UI tests + JaCoCo) & iOS (Unit tests + Slather)
-
-on:
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
-
-jobs:
-  # -----------------------
-  # Android: UI tests + JaCoCo
-  # -----------------------
-  android-ui-test:
-    name: Android UI tests + JaCoCo
-    runs-on: ubuntu-latest
-    steps:
-      # リポジトリを取得
-      - name: Checkout repo
-        uses: actions/checkout@v4
-
-      # JDK をセット（Android Gradle Plugin の要件に合わせる）
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 17
-
-      # Android SDK をセットアップ（platform-tools, build-tools 等を導入）
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          # 必要なら packages を指定して特定の platform/build-tools/system-image を入れる
-          packages: |
-            platform-tools
-            platforms;android-33
-            build-tools;33.0.2
-            system-images;android-33;google_apis;x86_64
-
-      # エミュレータを作成して起動 → スクリプトで gradle 実行
-      - name: Run Android Emulator and connected tests
-        uses: reactivecircus/android-emulator-runner@v2
-        with:
-          api-level: 33                # エミュレータのAPIレベル
-          arch: x86_64                 # CIでは x86_64 が高速で安定
-          target: google_apis          # google_api イメージを推奨
-          profile: pixel_6            # AVD プロファイル名（任意）
-          disable-animations: true     # UIテストの安定化に有効
-          # 実行するコマンド。connectedDebugAndroidTest を走らせ、jacoco 用タスクでレポート生成
-          script: ./gradlew connectedDebugAndroidTest jacocoAndroidTestReport --no-daemon
-
-      # Jacoco レポートを artifacts として保存（HTML レポート）
-      - name: Upload Android coverage report
-        uses: actions/upload-artifact@v4
-        with:
-          name: android-coverage-report
-          path: app/build/reports/jacoco/jacocoAndroidTestReport/html
-
-  # -----------------------
-  # iOS: Unit tests + Slather
-  # -----------------------
-  ios-test:
-    name: iOS Unit tests + Slather
-    runs-on: macos-latest
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
-
-      # Ruby (Bundler) をセットアップ（slather は gem）
-      - name: Set up Ruby
-        uses: ruby/setup-ruby@v1
-        with:
-          ruby-version: 3.2
-
-      # (任意) CocoaPods を使う場合は pod install
-      - name: Install CocoaPods (if using CocoaPods)
-        if: -f Podfile
-        run: |
-          gem install bundler
-          bundle install --path vendor/bundle
-          bundle exec pod install
-
-      # Run xcodebuild tests with coverage enabled
-      - name: Run iOS unit tests (xcodebuild) with coverage
-        run: |
-          # ワークスペース or プロジェクト、スキーム名は自分のプロジェクトに合わせて変更
-          xcodebuild \
-            -workspace MyApp.xcworkspace \
-            -scheme "MyApp" \
-            -destination 'platform=iOS Simulator,name=iPhone 15,OS=latest' \
-            -enableCodeCoverage YES \
-            test
-
-      # Slather でカバレッジレポート生成
-      - name: Install Slather and run coverage
-        run: |
-          gem install slather
-          # slather 実行例（workspace を使っている場合）
-          bundle exec slather coverage --scheme "MyApp" --workspace "MyApp.xcworkspace" MyApp.xcodeproj || slather coverage --scheme "MyApp" --workspace "MyApp.xcworkspace" MyApp.xcodeproj
-
-      # Slather 出力（適宜出力先を指定したらアップロード）
-      - name: Upload iOS coverage report
-        uses: actions/upload-artifact@v4
-        with:
-          name: ios-coverage-report
-          path: slather-report || cobertura.xml || ./coverage # slather の出力先に合わせて
-
-iOS：.slather.yml の簡単な例（リポジトリルート）
-# .slather.yml
-coverage_service: cobertura
-workspace: MyApp.xcworkspace
-project: MyApp.xcodeproj
-scheme: MyApp
-output_directory: slather-report
-
-
-Slather の基本的な使い方・フラグについては公式リポジトリやドキュメント参照を。 
-GitHub
-+1
-
-トラブルシューティング（よくあるハマりどころ）
-
-エミュレータが起動しない／テストが hang する
-
-arch: x86_64、disable-animations: true、google_apis を試す。起動待ち（adb wait-for-device）やタイムアウトを明示することも。 
-GitHub
-
-Jacoco の coverage データが生成されない
-
-testCoverageEnabled true の忘れ、または AGP のバージョン差による設定名の変化に注意。出力先パスが Gradle/AGP のバージョンで変わるのでパスを確認。 
-Google Issue Tracker
-
-Slather が coverage を拾わない
-
-Xcode のスキームで「Gather coverage data」が ON になっているか確認。テストが成功して DerivedData に coverage データ（xcresult/xccov）が生成されていることが前提。 
-GitHub
-
-ローカルでの確認手順（CI に入れる前に）
-
-Android：./gradlew connectedDebugAndroidTest jacocoAndroidTestReport をローカルで一度走らせて、app/build/reports/jacoco/... が作られるか確認。
-
-iOS：Xcode 上でスキームの「Gather coverage data」を ON にしてから xcodebuild test -scheme MyApp -enableCodeCoverage YES ... を実行、slather coverage ... を実行してレポートが生成されるか確認。
-
-参考（重要な外部リソース）
-
-ReactiveCircus の Android emulator runner（エミュレータ起動用アクション）。このアクションを使うとエミュレータ作成 → 起動 → スクリプト実行が簡単です。 
-GitHub
-
-android-actions/setup-android（Android SDK をセットする公式アクション）。 
-GitHub
-
-JaCoCo / AGP 関連の注意（testCoverageEnabled の扱いなど、AGP のバージョンにより差があるため問題発生時は該当 Issue を参照）。 
-Google Issue Tracker
-
-Slather（Xcode のカバレッジをパースしてレポートを作るツール）公式 repo。スキーム側での設定や使い方がまとまっています。 
-GitHub
-+1
-
-https://chatgpt.com/c/68d9358d-dd0c-8323-b79e-1986934e8f43
