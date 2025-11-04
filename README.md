@@ -1,4 +1,45 @@
-package com.example.bleapp
+
+**＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝
+＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝
+＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝**
+
+**新版**
+
+package com.example.bleapp.ble
+
+import java.util.*
+
+/**
+ * BLEデバイス情報を保持するデータクラス
+ * - address: デバイスのMACアドレス
+ * - name: デバイス名（nullの可能性あり）
+ */
+data class BLEDeviceInfo(
+    val address: String,
+    val name: String?
+)
+
+/**
+ * サービス情報
+ * - BLEのサービスUUIDを格納
+ */
+data class BLEServiceInfo(
+    val uuid: UUID
+)
+
+/**
+ * キャラクタリスティック情報
+ * - 所属するサービスUUIDとキャラクタリスティックUUIDを保持
+ */
+data class BLECharacteristicInfo(
+    val serviceUUID: UUID,
+    val characteristicUUID: UUID
+)
+
+
+===================
+
+package com.example.bleapp.ble
 
 import android.annotation.SuppressLint
 import android.bluetooth.*
@@ -10,582 +51,680 @@ import android.util.Log
 import java.util.*
 
 /**
- * BLEModule
+ * BLE通信の下位モジュール
  *
- * - BluetoothGatt 等の OS リソースは内部で管理（UI に渡さない）
- * - Service / Characteristic UUID は外部で管理（UI/VM/Config 側で保持）
- * - スキャン / 接続 / サービス探索 / 書き込み / 通知 を提供
- * - 異常時は必ず listener に通知し、UI がハングしないようにする
+ * AndroidのBluetoothGattを直接扱い、
+ * スキャン・接続・サービス探索・通知設定・書き込みなどを行う。
+ * 上位層（BLECore）にイベントコールバックを通知する。
  */
-class BLEModule(private val context: Context) {
+@SuppressLint("MissingPermission")
+class BLEModule(
+    private val context: Context,
+    private val listener: Listener
+) {
 
-    private val TAG = "BLEModule"
-    private val mainHandler = Handler(Looper.getMainLooper())
-
-    private val bluetoothManager =
-        context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
-    private val bluetoothAdapter: BluetoothAdapter? = bluetoothManager.adapter
-    private val scanner: BluetoothLeScanner? = bluetoothAdapter?.bluetoothLeScanner
-
-    private var bluetoothGatt: BluetoothGatt? = null
-
-    private var isScanning = false
-    private var isConnecting = false
-
-    // 書き込みタイムアウト管理用マップ
-    private val WRITE_TIMEOUT_MS = 5000L
-    private val writeTimeoutMap = mutableMapOf<UUID, Runnable>()
-
-    // --------------------------------------------------
-    // Listener: UI / ViewModel に通知するイベント（OSオブジェクトは渡さない）
-    // --------------------------------------------------
+    /**
+     * BLEの主要イベントを通知するためのリスナー
+     */
     interface Listener {
-        fun onScanResult(deviceName: String?, deviceAddress: String)
-        fun onScanFailed(errorCode: Int)
-        fun onScanTimeout()
-
-        fun onConnecting(deviceAddress: String)
-        fun onConnected(deviceAddress: String)
-        fun onDisconnected(deviceAddress: String)
-        fun onConnectionFailed(deviceAddress: String?, reason: String)
-
-        fun onServicesDiscovered(deviceAddress: String, services: List<UUID>)
-
-        fun onCharacteristicChanged(characteristicUuid: UUID, value: ByteArray)
-        fun onWriteSuccess(characteristicUuid: UUID)
-        fun onWriteFailed(characteristicUuid: UUID?, reason: String)
+        fun onDeviceFound(deviceInfo: BLEDeviceInfo)                         // スキャンでデバイス発見時
+        fun onConnected(deviceInfo: BLEDeviceInfo)                           // 接続成功時
+        fun onDisconnected(deviceInfo: BLEDeviceInfo)                        // 切断時
+        fun onServicesDiscovered(deviceInfo: BLEDeviceInfo, services: List<BLEServiceInfo>) // サービス探索完了時
+        fun onCharacteristicChanged(
+            deviceInfo: BLEDeviceInfo,
+            characteristic: BLECharacteristicInfo,
+            value: ByteArray
+        )                                                                    // 通知（Notify）受信時
+        fun onWriteSuccess(deviceInfo: BLEDeviceInfo, characteristic: BLECharacteristicInfo) // 書き込み成功時
+        fun onError(error: ErrorType, message: String? = null)               // エラー時
     }
 
-    var listener: Listener? = null
+    /**
+     * 各種エラー分類
+     */
+    enum class ErrorType {
+        SCAN_FAILED, CONNECT_FAILED, DISCOVER_FAILED, WRITE_FAILED, GATT_ERROR, NOTIFY_FAILED
+    }
 
-    // ==============================================================
-    // Scan
-    // ==============================================================
-    private val scanCallback = object : ScanCallback() {
-        override fun onScanResult(callbackType: Int, result: ScanResult) {
-            listener?.onScanResult(result.device.name, result.device.address)
+    // Bluetooth関連オブジェクト
+    private val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
+    private val bluetoothAdapter = bluetoothManager.adapter
+    private var bluetoothGatt: BluetoothGatt? = null
+    private var scanner: BluetoothLeScanner? = null
+
+    private val handler = Handler(Looper.getMainLooper())
+
+    /**
+     * デバイススキャンを開始
+     * 一定時間後に自動停止する（timeoutMs）
+     */
+    fun startScan(timeoutMs: Long = 10000L) {
+        if (bluetoothAdapter == null || !bluetoothAdapter.isEnabled) {
+            listener.onError(ErrorType.SCAN_FAILED, "Bluetooth unavailable")
+            return
         }
 
-        override fun onBatchScanResults(results: MutableList<ScanResult>) {
-            results.forEach { listener?.onScanResult(it.device.name, it.device.address) }
+        scanner = bluetoothAdapter.bluetoothLeScanner
+        scanner?.startScan(scanCallback)
+
+        // タイムアウト後にスキャン停止
+        handler.postDelayed({ stopScan() }, timeoutMs)
+    }
+
+    /** スキャン停止 */
+    fun stopScan() {
+        scanner?.stopScan(scanCallback)
+    }
+
+    /** スキャン結果コールバック */
+    private val scanCallback = object : ScanCallback() {
+        override fun onScanResult(callbackType: Int, result: ScanResult?) {
+            result?.device?.let {
+                listener.onDeviceFound(BLEDeviceInfo(it.address, it.name))
+            }
         }
 
         override fun onScanFailed(errorCode: Int) {
-            isScanning = false
-            Log.e(TAG, "scan failed: $errorCode")
-            listener?.onScanFailed(errorCode)
+            listener.onError(ErrorType.SCAN_FAILED, "Scan failed: $errorCode")
         }
     }
 
-    @SuppressLint("MissingPermission")
-    fun startScan(timeoutMs: Long = 10_000L) {
-        if (isScanning) return
-
-        val adapter = bluetoothAdapter
-        if (adapter == null || !adapter.isEnabled) {
-            listener?.onScanFailed(-1)
-            return
-        }
-
-        isScanning = true
-        scanner?.startScan(scanCallback)
-        Log.d(TAG, "scan start")
-
-        // タイマーでスキャンタイムアウトを管理
-        mainHandler.postDelayed({
-            if (isScanning) {
-                stopScan()
-                listener?.onScanTimeout()
-            }
-        }, timeoutMs)
-    }
-
-    @SuppressLint("MissingPermission")
-    fun stopScan() {
-        if (!isScanning) return
-        scanner?.stopScan(scanCallback)
-        isScanning = false
-        Log.d(TAG, "scan stop")
-    }
-
-    // ==============================================================
-    // Connect / Disconnect / Close
-    // ==============================================================
-    @SuppressLint("MissingPermission")
-    fun connect(deviceAddress: String) {
-        if (isConnecting) return
-
-        val adapter = bluetoothAdapter
-        if (adapter == null || !adapter.isEnabled) {
-            listener?.onConnectionFailed(deviceAddress, "Bluetooth adapter disabled")
-            return
-        }
-
-        val device = try {
-            adapter.getRemoteDevice(deviceAddress)
-        } catch (e: IllegalArgumentException) {
-            listener?.onConnectionFailed(null, "Invalid device address")
-            return
-        }
-
-        isConnecting = true
-        listener?.onConnecting(device.address)
-
+    /**
+     * 指定したアドレスのデバイスへ接続
+     */
+    fun connect(address: String) {
         try {
+            val device = bluetoothAdapter?.getRemoteDevice(address)
+                ?: return listener.onError(ErrorType.CONNECT_FAILED, "Device not found for address: $address")
+
+            // false = 自動再接続しない
             bluetoothGatt = device.connectGatt(context, false, gattCallback)
         } catch (e: Exception) {
-            isConnecting = false
-            Log.e(TAG, "connectGatt exception: ${e.message}")
-            listener?.onConnectionFailed(device.address, "connectGatt exception: ${e.message}")
+            listener.onError(ErrorType.CONNECT_FAILED, e.message)
         }
     }
 
-    @SuppressLint("MissingPermission")
+    /** 切断処理 */
     fun disconnect() {
         bluetoothGatt?.disconnect()
-        // 書き込みタイマーも解除
-        writeTimeoutMap.values.forEach { mainHandler.removeCallbacks(it) }
-        writeTimeoutMap.clear()
-    }
-
-    @SuppressLint("MissingPermission")
-    fun close() {
-        stopScan()
         bluetoothGatt?.close()
         bluetoothGatt = null
-        isConnecting = false
-        writeTimeoutMap.values.forEach { mainHandler.removeCallbacks(it) }
-        writeTimeoutMap.clear()
     }
 
-    // ==============================================================
-    // discoverServices（UI側が明示的に呼ぶ）
-    // ==============================================================
-    @SuppressLint("MissingPermission")
-    fun discoverServices() {
-        val g = bluetoothGatt
-        if (g == null) {
-            listener?.onConnectionFailed(null, "GATT not connected")
-            return
-        }
-        val started = g.discoverServices()
-        if (!started) {
-            listener?.onConnectionFailed(g.device.address, "discoverServices returned false")
-        } else {
-            Log.d(TAG, "discoverServices started")
-        }
-    }
-
-    // ==============================================================
-    // GATT Callback（内部で OS資源 を扱う）
-    // ==============================================================
+    /**
+     * GATT通信に関するイベントコールバック
+     */
     private val gattCallback = object : BluetoothGattCallback() {
 
-        @SuppressLint("MissingPermission")
-        override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
-            isConnecting = false
+        /** 接続状態変更時（接続・切断など） */
+        override fun onConnectionStateChange(gatt: BluetoothGatt?, status: Int, newState: Int) {
+            val device = gatt?.device ?: return
+            val info = BLEDeviceInfo(device.address, device.name)
 
             if (status != BluetoothGatt.GATT_SUCCESS) {
-                val reason = "GATT error status=$status"
-                Log.e(TAG, "connection error: $reason")
-                listener?.onConnectionFailed(gatt.device.address, reason)
-                close()
+                listener.onError(ErrorType.GATT_ERROR, "Connection error: $status")
                 return
             }
 
             when (newState) {
-                BluetoothProfile.STATE_CONNECTED -> {
-                    Log.d(TAG, "connected: ${gatt.device.address}")
-                    listener?.onConnected(gatt.device.address)
-                    // discoverServices は UI 側で呼ぶ
-                }
-                BluetoothProfile.STATE_DISCONNECTED -> {
-                    Log.d(TAG, "disconnected: ${gatt.device.address}")
-                    listener?.onDisconnected(gatt.device.address)
-                    close()
-                }
+                BluetoothProfile.STATE_CONNECTED -> listener.onConnected(info)
+                BluetoothProfile.STATE_DISCONNECTED -> listener.onDisconnected(info)
             }
         }
 
-        override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
-            if (status == BluetoothGatt.GATT_SUCCESS) {
-                val uuids = gatt.services.map { it.uuid }
-                listener?.onServicesDiscovered(gatt.device.address, uuids)
-            } else {
-                val reason = "Service discovery failed: status=$status"
-                Log.e(TAG, reason)
-                listener?.onConnectionFailed(gatt.device.address, reason)
-                close()
-            }
-        }
-
-        override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
-            listener?.onCharacteristicChanged(characteristic.uuid, characteristic.value ?: ByteArray(0))
-        }
-
-        override fun onCharacteristicWrite(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
-            // 書き込みタイマー解除
-            writeTimeoutMap[characteristic.uuid]?.let {
-                mainHandler.removeCallbacks(it)
-                writeTimeoutMap.remove(characteristic.uuid)
-            }
+        /** サービス探索完了時 */
+        override fun onServicesDiscovered(gatt: BluetoothGatt?, status: Int) {
+            val device = gatt?.device ?: return
+            val info = BLEDeviceInfo(device.address, device.name)
 
             if (status == BluetoothGatt.GATT_SUCCESS) {
-                listener?.onWriteSuccess(characteristic.uuid)
+                val services = gatt.services.map { BLEServiceInfo(it.uuid) }
+                listener.onServicesDiscovered(info, services)
             } else {
-                listener?.onWriteFailed(characteristic.uuid, "Write failed status=$status")
+                listener.onError(ErrorType.DISCOVER_FAILED, "Service discovery failed: $status")
             }
+        }
+
+        /** キャラクタリスティック書き込み完了時 */
+        override fun onCharacteristicWrite(
+            gatt: BluetoothGatt?, characteristic: BluetoothGattCharacteristic?, status: Int
+        ) {
+            val device = gatt?.device ?: return
+            val info = BLEDeviceInfo(device.address, device.name)
+            val charInfo = characteristic?.let { BLECharacteristicInfo(it.service.uuid, it.uuid) } ?: return
+
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+                listener.onWriteSuccess(info, charInfo)
+            } else {
+                listener.onError(ErrorType.WRITE_FAILED, "Write failed: $status")
+            }
+        }
+
+        /** 通知（Notify）受信時 */
+        override fun onCharacteristicChanged(
+            gatt: BluetoothGatt?, characteristic: BluetoothGattCharacteristic?
+        ) {
+            val device = gatt?.device ?: return
+            val info = BLEDeviceInfo(device.address, device.name)
+            val charInfo = characteristic?.let { BLECharacteristicInfo(it.service.uuid, it.uuid) } ?: return
+
+            listener.onCharacteristicChanged(info, charInfo, characteristic.value ?: byteArrayOf())
         }
     }
 
-    // ==============================================================
-    // Public API: write / enableNotification
-    // - UUIDは呼び出し元で保持し、引数として渡す（UI側でUUIDを扱ってOK）
-    // - BluetoothGatt / Descriptor 等の OS オブジェクトは内部で扱う
-    // - 書き込みタイムアウトを追加
-    // ==============================================================
-    @SuppressLint("MissingPermission")
-    fun writeCharacteristic(serviceUuid: UUID, charUuid: UUID, data: ByteArray): Boolean {
-        val g = bluetoothGatt ?: run {
-            listener?.onWriteFailed(null, "GATT not connected")
-            return false
-        }
-
-        val service = g.getService(serviceUuid)
-        if (service == null) {
-            listener?.onWriteFailed(null, "Service not found: $serviceUuid")
-            return false
-        }
-
-        val characteristic = service.getCharacteristic(charUuid)
-        if (characteristic == null) {
-            listener?.onWriteFailed(null, "Characteristic not found: $charUuid")
-            return false
-        }
-
-        characteristic.value = data
-        val started = g.writeCharacteristic(characteristic)
-
-        if (!started) {
-            listener?.onWriteFailed(charUuid, "writeCharacteristic returned false")
-            return false
-        }
-
-        // 書き込みタイマーセット
-        val writeRunnable = Runnable {
-            listener?.onWriteFailed(charUuid, "Write timeout after $WRITE_TIMEOUT_MS ms")
-            writeTimeoutMap.remove(charUuid)
-        }
-        writeTimeoutMap[charUuid] = writeRunnable
-        mainHandler.postDelayed(writeRunnable, WRITE_TIMEOUT_MS)
-
-        return true
+    /** サービス探索を実行 */
+    fun discoverServices() {
+        bluetoothGatt?.discoverServices()
+            ?: listener.onError(ErrorType.DISCOVER_FAILED, "Gatt not connected")
     }
 
-    @SuppressLint("MissingPermission")
-    fun enableNotification(serviceUuid: UUID, charUuid: UUID): Boolean {
-        val g = bluetoothGatt ?: run {
-            listener?.onConnectionFailed(null, "GATT not connected")
-            return false
+    /**
+     * キャラクタリスティックに値を書き込む
+     */
+    fun writeCharacteristic(serviceUUID: UUID, charUUID: UUID, value: ByteArray) {
+        val gatt = bluetoothGatt ?: return listener.onError(ErrorType.WRITE_FAILED, "No GATT connection")
+        val service = gatt.getService(serviceUUID)
+            ?: return listener.onError(ErrorType.WRITE_FAILED, "Service not found: $serviceUUID")
+        val characteristic = service.getCharacteristic(charUUID)
+            ?: return listener.onError(ErrorType.WRITE_FAILED, "Characteristic not found: $charUUID")
+
+        characteristic.value = value
+
+        // 非同期で結果は onCharacteristicWrite に通知される
+        if (!gatt.writeCharacteristic(characteristic)) {
+            listener.onError(ErrorType.WRITE_FAILED, "writeCharacteristic() returned false")
+        }
+    }
+
+    /**
+     * 通知（Notify）を有効化
+     * - setCharacteristicNotification() に加えて、
+     *   CCCD (Client Characteristic Configuration Descriptor) の設定も必須。
+     */
+    fun enableNotification(serviceUUID: UUID, charUUID: UUID, enable: Boolean = true) {
+        val gatt = bluetoothGatt ?: return listener.onError(ErrorType.NOTIFY_FAILED, "No GATT connection")
+        val service = gatt.getService(serviceUUID)
+            ?: return listener.onError(ErrorType.NOTIFY_FAILED, "Service not found: $serviceUUID")
+        val characteristic = service.getCharacteristic(charUUID)
+            ?: return listener.onError(ErrorType.NOTIFY_FAILED, "Characteristic not found: $charUUID")
+
+        val success = gatt.setCharacteristicNotification(characteristic, enable)
+        if (!success) {
+            listener.onError(ErrorType.NOTIFY_FAILED, "setCharacteristicNotification failed")
+            return
         }
 
-        val service = g.getService(serviceUuid) ?: run {
-            listener?.onConnectionFailed(null, "Service not found: $serviceUuid")
-            return false
-        }
-
-        val characteristic = service.getCharacteristic(charUuid) ?: run {
-            listener?.onConnectionFailed(null, "Characteristic not found: $charUuid")
-            return false
-        }
-
-        val ok = g.setCharacteristicNotification(characteristic, true)
+        // CCCD（通知有効化デスクリプタ）の設定
         val descriptor = characteristic.getDescriptor(UUID.fromString("00002902-0000-1000-8000-00805f9b34fb"))
         if (descriptor != null) {
-            descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
-            val writeStarted = g.writeDescriptor(descriptor)
-            if (!writeStarted) {
-                listener?.onConnectionFailed(g.device.address, "writeDescriptor returned false")
+            descriptor.value = if (enable)
+                BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+            else
+                BluetoothGattDescriptor.DISABLE_NOTIFICATION_VALUE
+
+            if (!gatt.writeDescriptor(descriptor)) {
+                listener.onError(ErrorType.NOTIFY_FAILED, "writeDescriptor failed")
             }
         } else {
-            Log.w(TAG, "Client Characteristic Configuration Descriptor not found for $charUuid")
+            listener.onError(ErrorType.NOTIFY_FAILED, "CCCD descriptor not found")
         }
-        return ok
     }
 }
 
+=====================
 
-====================================================================================================================
 
-import CoreBluetooth
-import Foundation
+package com.example.bleapp.ble
 
-/// BLEModule
-///
-/// - CBCentralManager / CBPeripheral 等の OS リソースは内部で管理
-/// - Service / Characteristic UUID は外部で管理（UI/VM側で保持）
-/// - スキャン / 接続 / サービス探索 / 書き込み / 通知 を提供
-/// - 異常時は必ず listener に通知し、UI がハングしないようにする
-final class BLEModule: NSObject {
+import android.content.Context
+import android.os.Handler
+import android.os.Looper
+import android.util.Log
+import java.util.*
 
-    // MARK: - Listener: UI / ViewModel に通知するイベント
-    protocol Listener: AnyObject {
-        /// デバイスが見つかった
-        func onScanResult(name: String?, address: UUID)
-        /// スキャンに失敗した
-        func onScanFailed(error: Error)
-        /// スキャンがタイムアウトした
-        func onScanTimeout()
-        
-        /// 接続開始した
-        func onConnecting(address: UUID)
-        /// 接続成功
-        func onConnected(address: UUID)
-        /// 切断された
-        func onDisconnected(address: UUID)
-        /// 接続に失敗した
-        func onConnectionFailed(address: UUID?, reason: String)
-        
-        /// サービス探索成功
-        func onServicesDiscovered(address: UUID, services: [CBUUID])
-        /// キャラクタリスティック通知を受信
-        func onCharacteristicChanged(uuid: CBUUID, value: Data)
-        /// 書き込み成功
-        func onWriteSuccess(uuid: CBUUID)
-        /// 書き込み失敗
-        func onWriteFailed(uuid: CBUUID?, reason: String)
-    }
-    
-    weak var listener: Listener?
+/**
+ * BLE通信の上位制御クラス
+ *
+ * BLEModuleのイベントを受け取り、
+ * 一連のフロー（スキャン → 接続 → サービス探索 → 通知登録 → 書き込み）を管理する。
+ */
+class BLECore(context: Context) : BLEModule.Listener {
 
-    // MARK: - Internal state
-    private var central: CBCentralManager!
-    private var targetPeripheral: CBPeripheral?
+    private val bleModule = BLEModule(context, this)
+    private val handler = Handler(Looper.getMainLooper())
 
-    private var isScanning = false
-    private var isConnecting = false
+    private var connectedAddress: String? = null
+    private var currentState = State.IDLE
 
-    // タイマーによるスキャン・書き込みタイムアウト管理
-    private var scanTimeoutTimer: Timer?
-    private var writeTimeoutTimers: [CBUUID: Timer] = [:]
-    private let WRITE_TIMEOUT: TimeInterval = 5.0
+    // 対象デバイスの想定サービス/キャラクタリスティック
+    private val targetServiceUUID = UUID.fromString("0000180D-0000-1000-8000-00805f9b34fb") // Heart Rate Service
+    private val targetCharUUID = UUID.fromString("00002A37-0000-1000-8000-00805f9b34fb")   // Measurement Characteristic
 
-    // MARK: - Init
-    override init() {
-        super.init()
-        // メインスレッドで BLE イベントを受け取る
-        central = CBCentralManager(delegate: self, queue: .main)
+    private val writeData = byteArrayOf(0x01, 0x02, 0x03)
+
+    /** 内部状態管理 */
+    private enum class State {
+        IDLE, SCANNING, CONNECTING, DISCOVERING, SUBSCRIBING, WRITING, COMPLETED, ERROR
     }
 
-    // MARK: - Scan
-    /// BLE デバイスをスキャン開始
-    /// - timeout: タイムアウト（秒）
-    func startScan(timeout: TimeInterval = 10.0) {
-        guard central.state == .poweredOn else {
-            listener?.onScanFailed(error: NSError(domain: "BLE", code: -1, userInfo: [NSLocalizedDescriptionKey: "Bluetooth is off"]))
-            return
-        }
+    /** フロー開始 */
+    fun startFlow() {
+        Log.d("BLECore", "===== BLE FLOW START =====")
+        transitionTo(State.SCANNING)
+        bleModule.startScan()
 
-        guard !isScanning else { return }
-
-        isScanning = true
-        central.scanForPeripherals(withServices: nil, options: [CBCentralManagerScanOptionAllowDuplicatesKey: false])
-
-        // タイマーでスキャンタイムアウトを管理
-        scanTimeoutTimer?.invalidate()
-        scanTimeoutTimer = Timer.scheduledTimer(withTimeInterval: timeout, repeats: false) { [weak self] _ in
-            guard let self else { return }
-            if self.isScanning {
-                self.stopScan()
-                self.listener?.onScanTimeout()
-            }
-        }
-
-        print("[BLE] scan started")
+        // スキャンタイムアウト監視
+        handler.postDelayed({
+            if (currentState == State.SCANNING) error("Scan timeout")
+        }, 10000L)
     }
 
-    /// スキャン停止
-    func stopScan() {
-        guard isScanning else { return }
-        central.stopScan()
-        isScanning = false
-        print("[BLE] scan stopped")
-    }
-
-    // MARK: - Connect / Disconnect
-    /// デバイスに接続
-    func connect(to peripheralId: UUID) {
-        guard central.state == .poweredOn else {
-            listener?.onConnectionFailed(address: peripheralId, reason: "Bluetooth powered off")
-            return
-        }
-
-        // キャッシュから取得
-        if let knownPeripheral = central.retrievePeripherals(withIdentifiers: [peripheralId]).first {
-            isConnecting = true
-            listener?.onConnecting(address: knownPeripheral.identifier)
-            targetPeripheral = knownPeripheral
-            targetPeripheral?.delegate = self
-            central.connect(knownPeripheral, options: nil)
-        } else {
-            listener?.onConnectionFailed(address: nil, reason: "Peripheral not found in cache")
+    /** デバイス発見時 */
+    override fun onDeviceFound(deviceInfo: BLEDeviceInfo) {
+        Log.d("BLECore", "Device found: ${deviceInfo.name} (${deviceInfo.address})")
+        // 対象名を含むデバイスを検出したら接続
+        if (deviceInfo.name?.contains("TargetDevice") == true) {
+            bleModule.stopScan()
+            transitionTo(State.CONNECTING)
+            bleModule.connect(deviceInfo.address)
         }
     }
 
-    /// 接続解除
-    func disconnect() {
-        guard let p = targetPeripheral else { return }
-        central.cancelPeripheralConnection(p)
-        invalidateAllWriteTimeouts() // 書き込みタイマーも解除
+    /** 接続成功時 */
+    override fun onConnected(deviceInfo: BLEDeviceInfo) {
+        connectedAddress = deviceInfo.address
+        transitionTo(State.DISCOVERING)
+        bleModule.discoverServices()
     }
 
-    /// BLE モジュールを完全クローズ
-    func close() {
-        stopScan()
-        invalidateAllWriteTimeouts()
-        targetPeripheral = nil
-        isConnecting = false
+    /** 切断通知 */
+    override fun onDisconnected(deviceInfo: BLEDeviceInfo) {
+        Log.w("BLECore", "Disconnected: ${deviceInfo.address}")
+        transitionTo(State.ERROR)
     }
 
-    // MARK: - Discover Services
-    /// サービス探索（UI側が明示的に呼ぶ）
-    func discoverServices(_ serviceUUIDs: [CBUUID]? = nil) {
-        guard let p = targetPeripheral else {
-            listener?.onConnectionFailed(address: nil, reason: "Peripheral not connected")
-            return
-        }
-        p.discoverServices(serviceUUIDs)
-    }
-
-    // MARK: - Write Characteristic
-    /// キャラクタリスティックに書き込み（タイムアウト付き）
-    func writeCharacteristic(serviceUuid: CBUUID, charUuid: CBUUID, data: Data) {
-        guard let p = targetPeripheral else {
-            listener?.onWriteFailed(uuid: nil, reason: "Peripheral not connected")
-            return
-        }
-
-        guard let service = p.services?.first(where: { $0.uuid == serviceUuid }),
-              let characteristic = service.characteristics?.first(where: { $0.uuid == charUuid }) else {
-            listener?.onWriteFailed(uuid: nil, reason: "Characteristic not found")
-            return
-        }
-
-        // 書き込み実行
-        p.writeValue(data, for: characteristic, type: .withResponse)
-
-        // タイムアウト設定
-        writeTimeoutTimers[charUuid]?.invalidate()
-        writeTimeoutTimers[charUuid] = Timer.scheduledTimer(withTimeInterval: WRITE_TIMEOUT, repeats: false) { [weak self] _ in
-            self?.listener?.onWriteFailed(uuid: charUuid, reason: "Write timeout (\(self?.WRITE_TIMEOUT ?? 0)s)")
-            self?.writeTimeoutTimers.removeValue(forKey: charUuid)
-        }
-    }
-
-    private func invalidateWriteTimeout(for uuid: CBUUID) {
-        writeTimeoutTimers[uuid]?.invalidate()
-        writeTimeoutTimers.removeValue(forKey: uuid)
-    }
-
-    private func invalidateAllWriteTimeouts() {
-        writeTimeoutTimers.values.forEach { $0.invalidate() }
-        writeTimeoutTimers.removeAll()
-    }
-
-    // MARK: - Enable Notification
-    /// キャラクタリスティック通知開始
-    func enableNotification(serviceUuid: CBUUID, charUuid: CBUUID) {
-        guard let p = targetPeripheral else {
-            listener?.onConnectionFailed(address: nil, reason: "Peripheral not connected")
-            return
-        }
-
-        guard let service = p.services?.first(where: { $0.uuid == serviceUuid }),
-              let characteristic = service.characteristics?.first(where: { $0.uuid == charUuid }) else {
-            listener?.onConnectionFailed(address: nil, reason: "Characteristic not found")
+    /** サービス探索結果 */
+    override fun onServicesDiscovered(deviceInfo: BLEDeviceInfo, services: List<BLEServiceInfo>) {
+        val target = services.find { it.uuid == targetServiceUUID }
+        if (target == null) {
+            error("Target service not found")
             return
         }
 
         // 通知を有効化
-        p.setNotifyValue(true, for: characteristic)
+        transitionTo(State.SUBSCRIBING)
+        bleModule.enableNotification(targetServiceUUID, targetCharUUID)
+
+        // 書き込み実行例
+        transitionTo(State.WRITING)
+        bleModule.writeCharacteristic(targetServiceUUID, targetCharUUID, writeData)
+    }
+
+    /** 通知受信 */
+    override fun onCharacteristicChanged(deviceInfo: BLEDeviceInfo, characteristic: BLECharacteristicInfo, value: ByteArray) {
+        Log.d("BLECore", "Notify from ${characteristic.characteristicUUID}: ${value.joinToString()}")
+    }
+
+    /** 書き込み成功時 */
+    override fun onWriteSuccess(deviceInfo: BLEDeviceInfo, characteristic: BLECharacteristicInfo) {
+        Log.d("BLECore", "Write success: ${characteristic.characteristicUUID}")
+        transitionTo(State.COMPLETED)
+        Log.d("BLECore", "===== BLE FLOW COMPLETE =====")
+    }
+
+    /** モジュール側からのエラー通知 */
+    override fun onError(error: BLEModule.ErrorType, message: String?) {
+        error("BLEModule Error[$error]: $message")
+    }
+
+    /** 状態遷移 */
+    private fun transitionTo(newState: State) {
+        Log.d("BLECore", "State: $currentState → $newState")
+        currentState = newState
+    }
+
+    /** エラー処理（状態遷移＋切断） */
+    private fun error(msg: String) {
+        Log.e("BLECore", "Error: $msg")
+        transitionTo(State.ERROR)
+        bleModule.disconnect()
     }
 }
 
-// =====================================================
-// MARK: - CBCentralManagerDelegate
-// =====================================================
 
-extension BLEModule: CBCentralManagerDelegate {
-    func centralManagerDidUpdateState(_ central: CBCentralManager) {
-        switch central.state {
-        case .poweredOn:
-            print("[BLE] powered on")
-        case .unauthorized, .unsupported, .poweredOff:
-            print("[BLE] unavailable: \(central.state.rawValue)")
-        default: break
+＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝
+ios
+import Foundation
+import CoreBluetooth
+
+// MARK: - Info Structs (Kotlinのデータクラス相当)
+// デバイス・サービス・キャラクタリスティックの基本情報を保持
+struct BLEDeviceInfo {
+    let identifier: UUID
+    let name: String?
+}
+
+struct BLEServiceInfo {
+    let uuid: CBUUID
+}
+
+struct BLECharacteristicInfo {
+    let serviceUUID: CBUUID
+    let characteristicUUID: CBUUID
+}
+
+// MARK: - BLEModule
+// BLEの低レベル処理を担当（スキャン、接続、書き込み、通知登録など）
+final class BLEModule: NSObject {
+
+    enum ErrorType {
+        case scanFailed, connectFailed, discoverFailed, writeFailed, gattError, notifyFailed
+    }
+
+    protocol Listener: AnyObject {
+        // ====== Output (O): BLEイベント通知 ======
+        func onDeviceFound(_ deviceInfo: BLEDeviceInfo) // スキャンでデバイス検出時
+        func onConnected(_ deviceInfo: BLEDeviceInfo) // 接続成功時
+        func onDisconnected(_ deviceInfo: BLEDeviceInfo) // 切断時
+        func onServicesDiscovered(_ deviceInfo: BLEDeviceInfo, services: [BLEServiceInfo]) // サービス発見時
+        func onCharacteristicChanged(_ deviceInfo: BLEDeviceInfo, characteristic: BLECharacteristicInfo, value: Data) // 通知受信時
+        func onWriteSuccess(_ deviceInfo: BLEDeviceInfo, characteristic: BLECharacteristicInfo) // 書き込み成功時
+        func onError(_ error: ErrorType, message: String?) // エラー通知
+    }
+
+    private weak var listener: Listener?
+
+    private var centralManager: CBCentralManager!
+    private var connectedPeripheral: CBPeripheral?
+    private var discoveredDevices: [UUID: CBPeripheral] = [:]
+    private var scanTimer: Timer?
+
+    // ====== Input (I): 初期化 ======
+    init(listener: Listener) {
+        super.init()
+        self.listener = listener
+        self.centralManager = CBCentralManager(delegate: self, queue: nil)
+    }
+
+    // MARK: - Scan
+    // ====== Input (I): スキャン開始要求 ======
+    func startScan(timeout: TimeInterval = 10.0) {
+        guard centralManager.state == .poweredOn else {
+            listener?.onError(.scanFailed, message: "Bluetooth unavailable")
+            return
+        }
+        discoveredDevices.removeAll()
+        centralManager.scanForPeripherals(withServices: nil, options: nil)
+        // タイムアウトで自動停止
+        scanTimer?.invalidate()
+        scanTimer = Timer.scheduledTimer(withTimeInterval: timeout, repeats: false) { [weak self] _ in
+            self?.stopScan()
         }
     }
 
+    // ====== Input (I): スキャン停止要求 ======
+    func stopScan() {
+        centralManager.stopScan()
+    }
+
+    // MARK: - Connect
+    // ====== Input (I): デバイス接続要求 ======
+    func connect(to identifier: UUID) {
+        guard let peripheral = discoveredDevices[identifier] else {
+            listener?.onError(.connectFailed, message: "Device not found for id \(identifier)")
+            return
+        }
+        connectedPeripheral = peripheral
+        peripheral.delegate = self
+        centralManager.connect(peripheral, options: nil)
+    }
+
+    // ====== Input (I): 明示的な切断要求 ======
+    func disconnect() {
+        if let peripheral = connectedPeripheral {
+            centralManager.cancelPeripheralConnection(peripheral)
+        }
+        connectedPeripheral = nil
+    }
+
+    // MARK: - Discover Services
+    // ====== Input (I): サービス探索要求 ======
+    func discoverServices() {
+        guard let peripheral = connectedPeripheral else {
+            listener?.onError(.discoverFailed, message: "No GATT connection")
+            return
+        }
+        peripheral.discoverServices(nil)
+    }
+
+    // MARK: - Write
+    // ====== Input (I): キャラクタリスティックへの書き込み要求 ======
+    func writeCharacteristic(serviceUUID: CBUUID, charUUID: CBUUID, value: Data) {
+        guard let peripheral = connectedPeripheral else {
+            listener?.onError(.writeFailed, message: "No GATT connection")
+            return
+        }
+        guard let service = peripheral.services?.first(where: { $0.uuid == serviceUUID }) else {
+            listener?.onError(.writeFailed, message: "Service not found: \(serviceUUID)")
+            return
+        }
+        guard let characteristic = service.characteristics?.first(where: { $0.uuid == charUUID }) else {
+            listener?.onError(.writeFailed, message: "Characteristic not found: \(charUUID)")
+            return
+        }
+        peripheral.writeValue(value, for: characteristic, type: .withResponse)
+    }
+
+    // MARK: - Enable Notification
+    // ====== Input (I): 通知有効化/無効化要求 ======
+    func enableNotification(serviceUUID: CBUUID, charUUID: CBUUID, enable: Bool = true) {
+        guard let peripheral = connectedPeripheral else {
+            listener?.onError(.notifyFailed, message: "No GATT connection")
+            return
+        }
+        guard let service = peripheral.services?.first(where: { $0.uuid == serviceUUID }) else {
+            listener?.onError(.notifyFailed, message: "Service not found: \(serviceUUID)")
+            return
+        }
+        guard let characteristic = service.characteristics?.first(where: { $0.uuid == charUUID }) else {
+            listener?.onError(.notifyFailed, message: "Characteristic not found: \(charUUID)")
+            return
+        }
+
+        // Output(O): 通知設定リクエスト送信
+        peripheral.setNotifyValue(enable, for: characteristic)
+    }
+}
+
+// MARK: - CBCentralManagerDelegate
+extension BLEModule: CBCentralManagerDelegate {
+
+    // ====== Output (O): Bluetooth状態変化通知 ======
+    func centralManagerDidUpdateState(_ central: CBCentralManager) {
+        if central.state != .poweredOn {
+            listener?.onError(.scanFailed, message: "Bluetooth not powered on")
+        }
+    }
+
+    // ====== Output (O): デバイス検出 ======
     func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral,
                         advertisementData: [String: Any], rssi RSSI: NSNumber) {
-        listener?.onScanResult(name: peripheral.name, address: peripheral.identifier)
+        discoveredDevices[peripheral.identifier] = peripheral
+        let info = BLEDeviceInfo(identifier: peripheral.identifier, name: peripheral.name)
+        listener?.onDeviceFound(info)
     }
 
+    // ====== Output (O): 接続成功 ======
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
-        isConnecting = false
-        targetPeripheral = peripheral
-        targetPeripheral?.delegate = self
-        listener?.onConnected(address: peripheral.identifier)
-        print("[BLE] connected \(peripheral.identifier)")
+        let info = BLEDeviceInfo(identifier: peripheral.identifier, name: peripheral.name)
+        listener?.onConnected(info)
+        peripheral.delegate = self
+        peripheral.discoverServices(nil)
     }
 
+    // ====== Output (O): 接続失敗 ======
     func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
-        isConnecting = false
-        listener?.onConnectionFailed(address: peripheral.identifier, reason: error?.localizedDescription ?? "failed to connect")
+        listener?.onError(.connectFailed, message: error?.localizedDescription)
     }
 
+    // ====== Output (O): 切断検出 ======
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
-        invalidateAllWriteTimeouts()
-        if let error = error {
-            listener?.onConnectionFailed(address: peripheral.identifier, reason: "Disconnected with error: \(error.localizedDescription)")
-        } else {
-            listener?.onDisconnected(address: peripheral.identifier)
-        }
+        let info = BLEDeviceInfo(identifier: peripheral.identifier, name: peripheral.name)
+        listener?.onDisconnected(info)
     }
 }
 
-// =====================================================
 // MARK: - CBPeripheralDelegate
-// =====================================================
-
 extension BLEModule: CBPeripheralDelegate {
 
+    // ====== Output (O): サービス探索結果 ======
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
         if let error = error {
-            listener?.onConnectionFailed(address: peripheral.identifier, reason: "Service discovery failed: \(error.localizedDescription)")
+            listener?.onError(.discoverFailed, message: error.localizedDescription)
             return
         }
 
         guard let services = peripheral.services else { return }
-        listener?.onServicesDiscovered(address: peripheral.identifier, services: services.map { $0.uuid })
-    }
+        let info = BLEDeviceInfo(identifier: peripheral.identifier, name: peripheral.name)
+        let list = services.map { BLEServiceInfo(uuid: $0.uuid) }
+        listener?.onServicesDiscovered(info, services: list)
 
-    func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
-        invalidateWriteTimeout(for: characteristic.uuid)
-        if let error = error {
-            listener?.onWriteFailed(uuid: characteristic.uuid, reason: error.localizedDescription)
-        } else {
-            listener?.onWriteSuccess(uuid: characteristic.uuid)
+        // I: 各サービスのキャラクタリスティックを探索
+        for service in services {
+            peripheral.discoverCharacteristics(nil, for: service)
         }
     }
 
-    func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
+    // ====== Output (O): 書き込み結果通知 ======
+    func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
+        let info = BLEDeviceInfo(identifier: peripheral.identifier, name: peripheral.name)
+        let charInfo = BLECharacteristicInfo(serviceUUID: characteristic.service.uuid, characteristicUUID: characteristic.uuid)
         if let error = error {
-            print("[BLE] notification error: \(error.localizedDescription)")
+            listener?.onError(.writeFailed, message: error.localizedDescription)
+        } else {
+            listener?.onWriteSuccess(info, characteristic: charInfo)
+        }
+    }
+
+    // ====== Output (O): 通知値更新 ======
+    func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
+        guard error == nil else {
+            listener?.onError(.notifyFailed, message: error?.localizedDescription)
             return
         }
-        if let value = characteristic.value {
-            listener?.onCharacteristicChanged(uuid: characteristic.uuid, value: value)
+        guard let value = characteristic.value else { return }
+        let info = BLEDeviceInfo(identifier: peripheral.identifier, name: peripheral.name)
+        let charInfo = BLECharacteristicInfo(serviceUUID: characteristic.service.uuid, characteristicUUID: characteristic.uuid)
+        listener?.onCharacteristicChanged(info, characteristic: charInfo, value: value)
+    }
+}
+
+
+=========================
+import Foundation
+import CoreBluetooth
+
+// MARK: - BLECore
+// BLEModuleを使って一連の処理フローを管理
+final class BLECore: BLEModule.Listener {
+
+    private let bleModule: BLEModule
+    private var currentState: State = .idle
+    private var connectedIdentifier: UUID?
+
+    private let targetServiceUUID = CBUUID(string: "180D")  // Heart Rate Service
+    private let targetCharUUID = CBUUID(string: "2A37")     // Measurement Characteristic
+    private let writeData = Data([0x01, 0x02, 0x03])
+
+    private enum State {
+        case idle, scanning, connecting, discovering, subscribing, writing, completed, error
+    }
+
+    init() {
+        bleModule = BLEModule(listener: self)
+    }
+
+    // ====== Input (I): フロー開始要求 ======
+    func startFlow() {
+        print("===== BLE FLOW START =====")
+        transition(to: .scanning)
+        bleModule.startScan()
+
+        // スキャンタイムアウト検出
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10) {
+            if self.currentState == .scanning {
+                self.error("Scan timeout")
+            }
         }
+    }
+
+    // ====== Output (O): デバイス検出 ======
+    func onDeviceFound(_ deviceInfo: BLEDeviceInfo) {
+        print("Device found: \(deviceInfo.name ?? "Unknown") (\(deviceInfo.identifier))")
+        if deviceInfo.name?.contains("TargetDevice") == true {
+            bleModule.stopScan()
+            transition(to: .connecting)
+            bleModule.connect(to: deviceInfo.identifier)
+        }
+    }
+
+    // ====== Output (O): 接続成功 ======
+    func onConnected(_ deviceInfo: BLEDeviceInfo) {
+        connectedIdentifier = deviceInfo.identifier
+        transition(to: .discovering)
+        bleModule.discoverServices()
+    }
+
+    // ====== Output (O): 切断検出 ======
+    func onDisconnected(_ deviceInfo: BLEDeviceInfo) {
+        print("Disconnected: \(deviceInfo.identifier)")
+        transition(to: .error)
+    }
+
+    // ====== Output (O): サービス発見後の処理 ======
+    func onServicesDiscovered(_ deviceInfo: BLEDeviceInfo, services: [BLEServiceInfo]) {
+        guard services.contains(where: { $0.uuid == targetServiceUUID }) else {
+            error("Target service not found")
+            return
+        }
+
+        // I: 通知を有効化
+        transition(to: .subscribing)
+        bleModule.enableNotification(serviceUUID: targetServiceUUID, charUUID: targetCharUUID)
+
+        // I: 書き込み実行
+        transition(to: .writing)
+        bleModule.writeCharacteristic(serviceUUID: targetServiceUUID, charUUID: targetCharUUID, value: writeData)
+    }
+
+    // ====== Output (O): 通知受信 ======
+    func onCharacteristicChanged(_ deviceInfo: BLEDeviceInfo, characteristic: BLECharacteristicInfo, value: Data) {
+        print("Notify from \(characteristic.characteristicUUID): \(Array(value))")
+    }
+
+    // ====== Output (O): 書き込み成功 ======
+    func onWriteSuccess(_ deviceInfo: BLEDeviceInfo, characteristic: BLECharacteristicInfo) {
+        print("Write success: \(characteristic.characteristicUUID)")
+        transition(to: .completed)
+        print("===== BLE FLOW COMPLETE =====")
+    }
+
+    // ====== Output (O): エラー発生 ======
+    func onError(_ error: BLEModule.ErrorType, message: String?) {
+        self.error("BLEModule Error[\(error)]: \(message ?? "")")
+    }
+
+    // ステート遷移管理
+    private func transition(to newState: State) {
+        print("State: \(currentState) → \(newState)")
+        currentState = newState
+    }
+
+    // ====== Input (I): 内部エラー処理 ======
+    private func error(_ msg: String) {
+        print("Error: \(msg)")
+        transition(to: .error)
+        bleModule.disconnect()
     }
 }
