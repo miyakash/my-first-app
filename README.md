@@ -1,3 +1,53 @@
+🎯 原因の正体：AARに外部依存ライブラリが「含まれない」こと
+
+AAR（Androidライブラリ）は、自分が依存している外部ライブラリの .jar や .aar を同梱しません。
+Gradleがそれらを「依存グラフを通じて解決」してくれる想定です。
+
+つまり：
+
+SDKの build.gradle で
+
+implementation "androidx.preference:preference-ktx:1.2.1"
+
+
+としていると、
+その preference-ktx は SDK内部専用扱い で、AARには同梱されません。
+
+その状態でUI側にAARを導入しても、
+UIプロジェクトから見ると androidx.preference は存在しない。
+
+→ 結果、実行時（またはビルド時）にクラスが見つからないエラーが発生。
+
+✅ 対応策
+
+この場合、2通りの解決策があります。
+
+① SDK側で api に変更する（推奨）
+dependencies {
+    api "androidx.preference:preference-ktx:1.2.1"
+}
+
+
+→ UI側に依存が自動で伝わり、
+UI側の gradle に何も書かなくても動作します。
+
+② UI側に明示的に依存追加（応急処置）
+dependencies {
+    implementation "androidx.preference:preference-ktx:1.2.1"
+}
+
+
+→ これで動くけど、
+本来は「SDKが内部で必要としているもの」なので、UIが知る必要はない。
+SDKの責任範囲にした方がよい（= api にする方が設計として正しい）。
+
+💬 まとめ
+状況	対応
+SDK内部で PreferenceManager / SharedPreferences を使っている	SDK側 build.gradle の dependencies を api に変更
+UI側に依存を追加しないと動かない	→ SDKのAARが依存を伝播できていないサイン
+Android標準APIを使っているだけ（android.content.SharedPreferences）	通常は不要（androidx.preferenceを使っていないなら）
+
+
 🔍 結論から言うと
 SDKの記載方法	UI側に追加が必要？	説明
 implementation	✅ 必要になることがある	UIからは依存ライブラリが「見えない」
