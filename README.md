@@ -1,3 +1,48 @@
+🔍 結論から言うと
+SDKの記載方法	UI側に追加が必要？	説明
+implementation	✅ 必要になることがある	UIからは依存ライブラリが「見えない」
+api	❌ 不要	UIに依存関係が伝わる（AAR経由で自動解決される）
+💡 具体例
+✅ 例1：UI側に追加が不要なケース
+// SDKの build.gradle
+dependencies {
+    api "androidx.preference:preference-ktx:1.2.1"
+}
+
+
+このように api を使うと、
+SDKを使うUI側プロジェクトでも自動的に androidx.preference が使えるようになります。
+（UIのgradleに何も書かなくてOK）
+
+⚠️ 例2：UI側に追加が必要なケース
+// SDKの build.gradle
+dependencies {
+    implementation "androidx.preference:preference-ktx:1.2.1"
+}
+
+
+この場合、UIアプリがSDK経由で PreferenceManager や PreferenceFragmentCompat などにアクセスすると、
+ビルド時に以下のようなエラーになります：
+
+Unresolved reference: PreferenceManager
+
+
+なぜかというと、implementation は「SDK内部でしか使わない依存」とみなされ、
+AARとして配布された際にUIには伝播しない からです。
+
+🧱 どう使い分けるか
+用途	推奨指定	理由
+SDKの内部だけで使うライブラリ（UIから見えない）	implementation	内部カプセル化できる
+UI側でも必要になる（UIから型やクラスを参照する）	api	UIに伝播させる必要あり
+🔧 あなたのケース（SharedPreferences系）
+
+SharedPreferences は Android 標準APIなので、
+
+androidx.preference などを使っていなければ → UI側に追加不要。
+
+androidx.preference をSDKで使っている場合 → SDK側で api にしておけばUI側は何もしなくてOK。
+
+
 
 **＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝
 ＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝
