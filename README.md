@@ -1,3 +1,81 @@
+BLEModule の役割
+
+BLE 通信処理（scan, connect, discoverServices など）を実装
+
+内部で最小限の シーケンス状態 を保持：
+
+enum class State {
+    Idle,
+    Scanning,
+    Connecting
+}
+
+
+状態は 上位層でのタイムアウト発生時や異常時の判断材料 として利用
+
+BLEModule の状態管理
+
+Idle：何もしていない状態
+
+Scanning：スキャン中
+
+Connecting：接続中（サービス探索含む）
+
+Error 状態は持たず、エラーはすべてイベントとして上位層に通知
+
+上位層（BLECore）の役割
+
+タイムアウト管理と異常ハンドリングを一元化
+
+BLEModule の状態を参照して、状況に応じた処理を行う：
+
+Scanning → stopScan()
+
+Connecting → disconnect()
+
+Connected → 重大エラー時に disconnect()
+
+タイムアウトやエラー発生時は状態を Idle に戻す
+
+エラーハンドリングの流れ
+
+BLEModule 内でエラー発生 → 上位層に通知 (listener.onError)
+
+BLECore は通知を受け、BLEModule の状態に応じて stop/disconnect を実行
+
+上位層が状態を Idle に復帰させ、次の操作に備える
+
+設計上のポイント
+
+BLEModule は BLE処理に専念、状態管理は最小限でシンプルに
+
+上位層で タイムアウトや異常処理を統一管理
+
+DiscoverServices は Connecting 状態に含め、上層からは意識させない
+
+SDK API として、上層は「Scanning / Connecting / Connected」の 3 状態のみ参照
+
+
+
+🔹 特徴
+
+BLEModule は状態管理を Idle / Scanning / Connecting / Connected に簡略化
+
+connect() 呼び出し時、既に接続中なら切断不要のエラー通知 (ALREADY_CONNECTED)
+
+Connecting 中の致命的エラー (CONNECT_FAILED, DISCOVER_FAILED) は自動で disconnect
+
+上層 BLECore がタイムアウト管理と異常ハンドリングを一元管理
+
+SDK として、上層は「Scanning / Connecting / Connected」の3状態のみ参照すれば OK
+
+
+
+
+
+
+
+
 🎯 原因の正体：AARに外部依存ライブラリが「含まれない」こと
 
 AAR（Androidライブラリ）は、自分が依存している外部ライブラリの .jar や .aar を同梱しません。
