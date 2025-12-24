@@ -1,3 +1,155 @@
+
+
+[課題]  
+Secure Enclave は実機専用のため、エミュレータでは使用できません。  
+Keychain は利用可能ですが、本番想定の厳格な属性・ACL を設定すると  
+エミュレータの前提条件を満たせず失敗します。  
+
+そのため、本番設定を緩めるのではなく、  
+回帰テスト用途に限定した設定切り替え、  
+もしくは実機での検証を併用する設計が妥当と考えています。  
+
+
+【背景 / 現状】  
+現在、エミュレータ（iOS Simulator）上では  
+Secure Enclave および Keychain を利用した処理が正常に動作していない。  
+
+これは実装不備ではなく、iOS のプラットフォーム仕様および  
+Keychain の属性設定に起因する挙動である。  
+  
+---
+
+【Secure Enclave について】  
+Secure Enclave は実機 SoC 内に存在する物理ハードウェアであり、  
+iOS Simulator には存在しない。  
+
+そのため  
+・Secure Enclave を指定した鍵生成  
+・Secure Enclave による暗号化／復号  
+はエミュレータでは実行できない。  
+
+この挙動は iOS の仕様であり、回避手段はない。  
+
+---
+
+【Keychain について】  
+Keychain 自体は OS が提供する論理的なセキュアストレージであり、  
+エミュレータでも利用可能である。  
+
+ただし、Keychain は属性（kSecAttrAccessible）および  
+Access Control（ACL）の設定内容によって  
+アクセス条件が厳密に制御される。  
+
+本番想定の設定では以下の制約が存在する：  
+・パスコード必須  
+・端末限定（バックアップ不可）  
+・Secure Enclave 前提  
+・生体認証（ACL）  
+
+これらの条件はエミュレータ環境では満たせないため、  
+Keychain API 自体は存在していても、操作が失敗する。  
+
+---
+
+【なぜ設定を緩くすると動くのか】  
+Keychain の属性を緩める（例：WhenUnlocked）ことで、  
+・パスコード不要  
+・バックアップ可  
+・認証不要  
+となり、エミュレータでも利用可能になる。  
+
+ただし、これは本番環境のセキュリティ要件から逸脱するため、  
+本番用途での採用は不適切である。  
+
+---
+
+【回帰テストに関する考慮】  
+回帰テスト（エミュレータ）の目的は  
+「セキュリティ強度の検証」ではなく、  
+「処理フローおよび機能の正しさの検証」である。  
+
+そのため、回帰テスト環境では以下を許容する余地がある：  
+・Secure Enclave を使用しない  
+・Keychain の属性をテスト用途に限定して緩和する  
+
+一方で、  
+・Secure Enclave の利用可否  
+・生体認証／パスコード連携  
+・ハードウェアバックドの保証  
+については、実機での検証を別途行う必要がある。  
+
+---
+
+【対応方針検討案】  
+・本番（実機）：  
+  Secure Enclave + 厳格な Keychain 属性／ACL を使用  
+・回帰テスト（エミュレータ）：  
+  Secure Enclave 非使用  
+  Keychain はテスト用途に限定した緩和設定を使用  
+・本番設定をエミュレータ都合で緩めることはしない  
+
+---
+
+【補足：Keychain 属性（kSecAttrAccessible）について】  
+Keychain には「いつ・どの状態でアクセス可能か」を制御する  
+属性（kSecAttrAccessible）が存在する。  
+
+代表的なもの：  
+・kSecAttrAccessibleWhenUnlocked  
+→・端末がロック解除されている間のみアクセス可能  
+ ・iCloud / iTunes バックアップの対象になる  
+ ・端末移行時に復元される  
+ ・エミュレータでも利用可能  
+
+・kSecAttrAccessibleAfterFirstUnlock  
+→・端末起動後、最初にロック解除されて以降は常にアクセス可能  
+ ・バックグラウンド実行時でもアクセスできる  
+ ・iCloud / iTunes バックアップの対象になる  
+ ・端末移行時に復元される  
+ ・エミュレータでも利用可能  
+
+・kSecAttrAccessibleWhenUnlockedThisDeviceOnly  
+→・端末がロック解除されている間のみアクセス可能  
+ ・この端末にのみ保存され、バックアップ対象外  
+ ・端末移行時には復元されない  
+ ・エミュレータでも利用可能  
+
+kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly  
+→・端末にパスコードが設定されている場合のみ使用可能  
+ ・端末がロック解除されている間のみアクセス可能  
+ ・この端末にのみ保存され、バックアップ対象外  
+ ・Secure Enclave と連携して利用されることが多い
+ ・エミュレータでは利用不可  
+
+属性によって以下が制御される：  
+・端末ロック状態  
+・再起動後の可否  
+・バックアップ可否  
+・エミュレータでの利用可否  
+
+---
+
+【公式ドキュメント】  
+・Keychain Services  
+  https://developer.apple.com/documentation/security/keychain_services  
+
+・Keychain Item Accessibility Constants  
+  https://developer.apple.com/documentation/security/keychain_item_accessibility_constants  
+
+・Secure Enclave  
+  https://developer.apple.com/documentation/security/secure_enclave  
+
+
+
+
+
+
+
+
+
+
+===========================================================================
+
 #### **【課題】**
 
 現在の実装では、端末が StrongBox 対応の場合のみ
