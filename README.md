@@ -1,4 +1,93 @@
+ver2
 
+Secure Enclave / Keychain 設計および回帰テスト方針について  
+#### 1. なぜ XCTest では Secure Enclave が利用できないのか
+※copilotと動作確認を元にした見解  
+
+Secure Enclave は以下の特性を持つ。  
+・実機のハードウェアに強く依存    
+・アプリ単位でサンドボックスに紐づく  
+・鍵は Secure Enclave 内部に生成・保持され、アプリ外（別 Bundle ID）から参照できない  
+
+一方で XCTest 実行時の構成は以下の通り。  
+XCTest は テスト対象アプリとは別アプリ（XCTest Runner） として起動される  
+Bundle ID / Code Sign / Keychain Access Group が異なる  
+エミュレータにおける Secure Enclave は 完全なエミュレーションが提供されていない 
+
+このため、  
+・アプリ実行時は動作する Secure Enclave 処理でも  
+・XCTest 実行時には    
+　・鍵生成に失敗する  
+　・既存鍵にアクセスできない  
+といった問題が発生する。  
+
+→これは実装不備ではなく、iOS のセキュリティモデル上の制約である。  
+
+
+#### 2. 暗号化されたデータを Keychain に保存する際の属性について  
+
+本要件では、  
+データは OS のセキュアな仕組みで保存したい  
+バックアップ（iCloud / iTunes）は不可  
+というセキュリティ要件がある。  
+
+この前提において、  
+暗号化済みデータを Keychain に保存する際の属性として  
+以下を採用するのが適切。  
+
+推奨属性  
+kSecAttrAccessibleWhenUnlockedThisDeviceOnly  
+
+理由  
+・端末アンロック時のみアクセス可能  
+・データは 当該端末にのみ紐づく  
+・バックアップ対象外（iCloud / 端末移行不可）  
+・実機・エミュレータ・XCTest すべてで動作可能  
+※ この属性は 「暗号化されたデータの保存」 に対する設定であり、  
+Secure Enclave 鍵の利用可否とは独立している。  
+
+#### 3. 本番環境における Secure Enclave / Keychain 設定  
+
+保存対象  
+・Secure Enclave 内に生成された秘密鍵  
+・鍵素材は Secure Enclave 外に出ず、Keychain には参照情報のみが保存される  
+
+採用設定  
+・Keychain 属性  
+　kSecAttrAccessibleWhenUnlockedThisDeviceOnly  
+・Access Control（ACL）  
+　.privateKeyUsage  
+
+理由  
+・端末アンロック時のみ利用可能  
+・端末に紐づき、バックアップ不可  
+・鍵のエクスポート不可、暗号化処理にのみ使用可能  
+
+補足（不採用とした設定）  
+・kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly  
+　→ パスコード未設定端末で利用不可となるため不採用  
+・生体認証（biometryCurrentSet 等）  
+　→ 要件外かつ XCTest / 回帰テストで成立しないため不採用  
+
+#### 4. 回帰テスト（XCTest）を踏まえた方針
+前提  
+・XCTest 環境では Secure Enclave が利用できない  
+
+方針  
+・XCTest 実行時は Secure Enclave を使用しない  
+・暗号化処理は回避し、データはそのまま Keychain に保存する  
+・Keychain の保存属性は 本番と同一 とする  
+
+目的  
+回帰テストでは以下にフォーカスする  
+・保存／読み出しの処理フロー  
+・Keychain 利用の成否    
+・Secure Enclave による暗号化・耐タンパ性の担保は  
+　実機・本番環境でのみ確認対象とする  
+
+
+
+=====================================================================
 
 [課題]  
 Secure Enclave は実機専用のため、エミュレータでは使用できません。  
