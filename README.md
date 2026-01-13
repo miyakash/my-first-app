@@ -1,3 +1,66 @@
+
+まず結論（9割ここ）
+
+connect(_ peripheral:) に渡している CBPeripheral が無効 or 期限切れです。
+
+主な原因とチェックポイント
+① scanForPeripherals で取得した peripheralを保持していない
+func centralManager(_ central: CBCentralManager,
+                    didDiscover peripheral: CBPeripheral,
+                    advertisementData: [String : Any],
+                    rssi RSSI: NSNumber) {
+
+    central.connect(peripheral, options: nil) // ← これだけだとNGになりやすい
+}
+
+
+❌ ローカル変数のまま connect するとエラーになることがある
+
+✅ プロパティで強参照する
+
+var targetPeripheral: CBPeripheral?
+
+func centralManager(_ central: CBCentralManager,
+                    didDiscover peripheral: CBPeripheral,
+                    advertisementData: [String : Any],
+                    rssi RSSI: NSNumber) {
+
+    self.targetPeripheral = peripheral
+    central.connect(peripheral, options: nil)
+}
+
+② CBCentralManager が .poweredOn になる前に connect()
+central.connect(peripheral, options: nil) // ← state未確認
+
+
+✅ 必ず確認
+
+func centralManagerDidUpdateState(_ central: CBCentralManager) {
+    guard central.state == .poweredOn else { return }
+}
+
+③ すでに切断された peripheral を再利用している
+
+アプリ再起動
+
+バックグラウンド復帰後
+
+前回の peripheral を保存して再接続
+
+❌ 古い CBPeripheral は 無効
+
+✅ 再取得する
+
+central.scanForPeripherals(withServices: nil)
+
+
+または
+
+central.retrievePeripherals(withIdentifiers: [uuid])
+
+
+===============================================
+
 ver2
 
 Secure Enclave / Keychain 設計および回帰テスト方針について  
